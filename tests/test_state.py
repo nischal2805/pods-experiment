@@ -38,3 +38,36 @@ def test_usage_record_fields():
     )
     assert rec.backend == "llamacpp"
     assert isinstance(rec.timestamp, datetime)
+
+
+from pods.state.defaults import new_pod, new_member, new_key
+
+
+def test_new_key_format():
+    key = new_key("my-label")
+    assert key.key.startswith("pk_")
+    assert len(key.key) == 35  # "pk_" + 32 chars
+    assert key.label == "my-label"
+    assert key.total_requests == 0
+    assert key.total_tokens == 0
+
+
+def test_new_key_is_unique():
+    k1 = new_key("a")
+    k2 = new_key("b")
+    assert k1.key != k2.key
+
+
+def test_new_member_defaults():
+    m = new_member("box1", "100.1.1.1", "coordinator", "linux", gpu_vram_gb=8)
+    assert m.role == "coordinator"
+    assert m.connection_type == "relay"
+    assert m.models == []
+    assert m.gpu_vram_gb == 8
+
+
+def test_new_pod_fields():
+    p = new_pod("mypod", "100.1.2.3")
+    assert p.name == "mypod"
+    assert p.coordinator_ip == "100.1.2.3"
+    assert p.id  # UUID generated
