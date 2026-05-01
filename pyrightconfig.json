@@ -1,0 +1,4 @@
+{
+  "include": ["pods", "tests"],
+  "extraPaths": ["."]
+}
