@@ -1,4 +1,8 @@
+from unittest.mock import MagicMock, patch
+
+from pods.inference.base import EngineStatus
 from pods.inference.detector import viable_engines
+from pods.inference.llamacpp import LlamaCppEngine
 from pods.platform.detect import PlatformInfo
 
 
@@ -41,12 +45,6 @@ def test_ollama_always_last():
         info = PlatformInfo(os="linux", gpu_vendor=vendor)
         engines = viable_engines(info)
         assert engines[-1] == "ollama"
-
-
-import pytest
-from unittest.mock import MagicMock, patch
-from pods.inference.llamacpp import LlamaCppEngine
-from pods.inference.base import EngineStatus
 
 
 def test_llamacpp_detect_false_when_binaries_missing(tmp_path):
