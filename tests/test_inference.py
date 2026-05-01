@@ -41,3 +41,67 @@ def test_ollama_always_last():
         info = PlatformInfo(os="linux", gpu_vendor=vendor)
         engines = viable_engines(info)
         assert engines[-1] == "ollama"
+
+
+import pytest
+from unittest.mock import MagicMock, patch
+from pods.inference.llamacpp import LlamaCppEngine
+from pods.inference.base import EngineStatus
+
+
+def test_llamacpp_detect_false_when_binaries_missing(tmp_path):
+    with patch("pods.inference.llamacpp.LLAMA_SERVER", tmp_path / "llama-server"), \
+         patch("pods.inference.llamacpp.RPC_SERVER", tmp_path / "rpc-server"):
+        engine = LlamaCppEngine()
+        assert engine.detect() is False
+
+
+def test_llamacpp_detect_true_when_binaries_present(tmp_path):
+    ls = tmp_path / "llama-server"
+    rpc = tmp_path / "rpc-server"
+    ls.touch()
+    rpc.touch()
+    with patch("pods.inference.llamacpp.LLAMA_SERVER", ls), \
+         patch("pods.inference.llamacpp.RPC_SERVER", rpc):
+        engine = LlamaCppEngine()
+        assert engine.detect() is True
+
+
+def test_llamacpp_stop_with_no_process():
+    engine = LlamaCppEngine()
+    engine.stop()  # must not raise
+
+
+def test_llamacpp_health_stopped_when_no_process():
+    engine = LlamaCppEngine()
+    engine._mode = "coordinator"
+    with patch("httpx.get", side_effect=Exception("connection refused")):
+        result = engine.health()
+    assert result.status == EngineStatus.STOPPED
+
+
+def test_llamacpp_worker_health_running_while_process_alive():
+    engine = LlamaCppEngine()
+    engine._mode = "worker"
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None  # still running
+    engine._process = mock_proc
+    result = engine.health()
+    assert result.status == EngineStatus.RUNNING
+
+
+def test_llamacpp_worker_health_stopped_when_process_dead():
+    engine = LlamaCppEngine()
+    engine._mode = "worker"
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = 1  # exited
+    engine._process = mock_proc
+    result = engine.health()
+    assert result.status == EngineStatus.STOPPED
+
+
+def test_llamacpp_get_models_empty_when_not_running():
+    engine = LlamaCppEngine()
+    with patch("httpx.get", side_effect=Exception("refused")):
+        models = engine.get_models()
+    assert models == []
