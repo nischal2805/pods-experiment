@@ -1,6 +1,5 @@
 import stat
 import pytest
-import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from pods.platform.setup import validate_existing_binaries, download_and_install_binaries
