@@ -1,4 +1,3 @@
-import pytest
 from pods.inference.detector import viable_engines
 from pods.platform.detect import PlatformInfo
 
