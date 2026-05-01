@@ -1,2 +1,0 @@
-[console_scripts]
-pods = pods.__main__:main

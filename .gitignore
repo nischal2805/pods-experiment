@@ -1,2 +1,7 @@
-claude.md
-E:\pods-experiment\docs
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+docs/
