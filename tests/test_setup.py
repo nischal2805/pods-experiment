@@ -12,8 +12,8 @@ def test_validate_missing_llama_server(tmp_path):
     rpc.touch()
     # Mock stat to indicate executable
     original_stat = Path.stat
-    def mock_stat(self):
-        real_stat = original_stat(self)
+    def mock_stat(self, **kwargs):
+        real_stat = original_stat(self, **kwargs)
         if str(self) == str(rpc):
             # Return a stat object with executable bit set
             return MagicMock(st_mode=real_stat.st_mode | stat.S_IEXEC)
@@ -31,8 +31,8 @@ def test_validate_missing_rpc_server(tmp_path):
     ls.touch()
     # Mock stat to indicate executable
     original_stat = Path.stat
-    def mock_stat(self):
-        real_stat = original_stat(self)
+    def mock_stat(self, **kwargs):
+        real_stat = original_stat(self, **kwargs)
         if str(self) == str(ls):
             # Return a stat object with executable bit set
             return MagicMock(st_mode=real_stat.st_mode | stat.S_IEXEC)
@@ -66,8 +66,8 @@ def test_validate_both_present_and_executable(tmp_path):
 
     # Mock stat to indicate both are executable
     original_stat = Path.stat
-    def mock_stat(self):
-        real_stat = original_stat(self)
+    def mock_stat(self, **kwargs):
+        real_stat = original_stat(self, **kwargs)
         if str(self) in (str(ls), str(rpc)):
             # Return a stat object with executable bit set
             return MagicMock(st_mode=real_stat.st_mode | stat.S_IEXEC)
