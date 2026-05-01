@@ -71,3 +71,84 @@ def test_new_pod_fields():
     assert p.name == "mypod"
     assert p.coordinator_ip == "100.1.2.3"
     assert p.id  # UUID generated
+
+
+import pytest
+from pathlib import Path
+from pods.state.store import StateStore
+from pods.errors import StateError
+
+
+def test_store_load_missing_file(tmp_path):
+    store = StateStore(path=tmp_path / "state.json")
+    with pytest.raises(StateError, match="not found"):
+        store.load()
+
+
+def test_store_load_malformed_json(tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text("{invalid json")
+    store = StateStore(path=p)
+    with pytest.raises(StateError, match="malformed"):
+        store.load()
+
+
+def test_store_save_and_load(tmp_path):
+    pod = Pod(name="mypod", coordinator_ip="100.2.3.4")
+    state = PodState(pod=pod)
+    store = StateStore(path=tmp_path / "state.json")
+    store.save(state)
+    loaded = store.load()
+    assert loaded.pod.name == "mypod"
+    assert loaded.pod.coordinator_ip == "100.2.3.4"
+
+
+def test_store_atomic_write_no_tmp_leftover(tmp_path):
+    pod = Pod(name="mypod", coordinator_ip="100.2.3.4")
+    state = PodState(pod=pod)
+    store = StateStore(path=tmp_path / "state.json")
+    store.save(state)
+    assert not (tmp_path / "state.json.tmp").exists()
+
+
+def test_store_save_creates_parent_dir(tmp_path):
+    nested = tmp_path / "deep" / "path" / "state.json"
+    pod = Pod(name="mypod", coordinator_ip="100.2.3.4")
+    state = PodState(pod=pod)
+    store = StateStore(path=nested)
+    store.save(state)
+    assert nested.exists()
+
+
+def test_trim_usage_keeps_last_1000(tmp_path):
+    from pods.state.schema import UsageRecord
+    pod = Pod(name="mypod", coordinator_ip="100.2.3.4")
+    records = [
+        UsageRecord(
+            key="pk_x", model="m",
+            prompt_tokens=1, completion_tokens=1,
+            backend="llamacpp", latency_ms=100,
+        )
+        for _ in range(1100)
+    ]
+    state = PodState(pod=pod, usage=records)
+    store = StateStore(path=tmp_path / "state.json")
+    trimmed = store.trim_usage(state)
+    assert len(trimmed.usage) == 1000
+
+
+def test_trim_usage_under_limit_unchanged(tmp_path):
+    from pods.state.schema import UsageRecord
+    pod = Pod(name="mypod", coordinator_ip="100.2.3.4")
+    records = [
+        UsageRecord(
+            key="pk_x", model="m",
+            prompt_tokens=1, completion_tokens=1,
+            backend="llamacpp", latency_ms=100,
+        )
+        for _ in range(50)
+    ]
+    state = PodState(pod=pod, usage=records)
+    store = StateStore(path=tmp_path / "state.json")
+    trimmed = store.trim_usage(state)
+    assert len(trimmed.usage) == 50
