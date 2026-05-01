@@ -423,6 +423,134 @@ When `pods join` runs on a new node, it runs the same pre-flight checks and repo
 
 ---
 
+## Project Directory Structure
+
+This is the full layout of the pods repository. Every module maps directly to one layer or one responsibility. Nothing lives outside its layer's directory.
+
+```
+pods/
+│
+├── pods/                          ← main Python package
+│   │
+│   ├── cli/                       ← all Click command definitions
+│   │   ├── __init__.py            ← registers all subcommands onto the root `pods` group
+│   │   ├── init.py                ← pods init
+│   │   ├── join.py                ← pods join <link>
+│   │   ├── attach.py              ← pods attach
+│   │   ├── invite.py              ← pods invite
+│   │   ├── keygen.py              ← pods keygen <label>
+│   │   ├── status.py              ← pods status
+│   │   ├── logs.py                ← pods logs
+│   │   ├── ping.py                ← pods ping
+│   │   └── model.py               ← pods model add / load / list / register
+│   │
+│   ├── gateway/                   ← FastAPI gateway process
+│   │   ├── __init__.py
+│   │   ├── app.py                 ← FastAPI app, mounts external and internal routers
+│   │   ├── routes_external.py     ← /v1/chat/completions and /v1/models
+│   │   ├── routes_internal.py     ← /internal/* endpoints
+│   │   ├── auth.py                ← pk_* key validation against state.json
+│   │   ├── router.py              ← backend selection logic, fallback chain
+│   │   └── proxy.py               ← SSE streaming proxy to selected backend
+│   │
+│   ├── agent/                     ← background process running on every node
+│   │   ├── __init__.py
+│   │   ├── heartbeat.py           ← 30s heartbeat thread to coordinator
+│   │   └── server.py              ← FastAPI server for internal commands (start-rpc, reconfigure)
+│   │
+│   ├── inference/                 ← process lifecycle management for all inference engines
+│   │   ├── __init__.py
+│   │   ├── base.py                ← abstract InferenceEngine base class with start/stop/health/detect
+│   │   ├── llamacpp.py            ← manages llama-server (coordinator) and rpc-server (worker) processes
+│   │   ├── exo.py                 ← manages exo daemon process
+│   │   ├── ollama.py              ← manages ollama process and model pulls
+│   │   ├── detector.py            ← hardware detection: GPU vendor, VRAM, CUDA version, platform
+│   │   └── fallback.py            ← tries engines in order, logs each attempt and failure reason
+│   │
+│   ├── state/                     ← all reads and writes to state.json
+│   │   ├── __init__.py
+│   │   ├── schema.py              ← dataclasses for Pod, Member, Key, UsageRecord, Model
+│   │   ├── store.py               ← StateStore class: load, save, atomic write, trim usage array
+│   │   └── defaults.py            ← default values for new pod, new member, new key
+│   │
+│   ├── network/                   ← Tailscale interaction
+│   │   ├── __init__.py
+│   │   ├── tailscale.py           ← wraps tailscale CLI: ip, status, ping, up, pre-auth key generation
+│   │   └── invite.py              ← encode and decode base64 invite links
+│   │
+│   ├── models/                    ← model registry and download orchestration
+│   │   ├── __init__.py
+│   │   ├── registry.py            ← built-in name → HuggingFace repo + GGUF filename mapping
+│   │   ├── downloader.py          ← streaming HuggingFace download with progress reporting
+│   │   └── manager.py             ← pods model add/load/list logic, coordinates with inference layer
+│   │
+│   ├── platform/                  ← platform detection and Windows WSL2 wrapper
+│   │   ├── __init__.py
+│   │   ├── detect.py              ← detects OS, WSL2, GPU vendor, CUDA version
+│   │   ├── setup.py               ← one-time setup: downloads correct llama.cpp binaries for platform
+│   │   └── windows.py             ← pods.exe WSL2 proxy logic, netsh port forwarding
+│   │
+│   ├── errors.py                  ← all user-facing error classes with message, reason, and suggestion fields
+│   ├── preflight.py               ← pre-flight check sequence run at init and join
+│   └── __main__.py                ← entry point: `python -m pods` invokes the Click root group
+│
+├── build/                         ← PyInstaller packaging
+│   ├── pods-linux.spec            ← PyInstaller spec for Linux ELF binary
+│   ├── pods-windows.spec          ← PyInstaller spec for Windows .exe (thin WSL2 wrapper only)
+│   ├── pods-macos.spec            ← PyInstaller spec for macOS universal binary
+│   └── Dockerfile                 ← builds the Docker image with CUDA llama.cpp binaries
+│
+├── tests/
+│   ├── test_state.py              ← StateStore read/write/trim tests
+│   ├── test_auth.py               ← API key validation tests
+│   ├── test_router.py             ← backend selection and fallback logic tests
+│   ├── test_invite.py             ← invite link encode/decode tests
+│   ├── test_preflight.py          ← pre-flight check tests with mocked system calls
+│   └── test_inference.py          ← process start/stop/health tests with mocked binaries
+│
+├── pyproject.toml                 ← package metadata, dependencies, CLI entry point definition
+├── README.md
+└── .github/
+    └── workflows/
+        ├── build-linux.yml        ← builds and releases Linux binary on tag push
+        ├── build-windows.yml      ← builds and releases Windows .exe on tag push
+        └── build-macos.yml        ← builds and releases macOS .dmg on tag push
+```
+
+### Module responsibility rules
+
+Every module has exactly one job. The CLI modules only parse arguments and call into other modules — no business logic lives in CLI files. The gateway modules only handle HTTP concerns — no inference engine logic lives in gateway files. The inference modules only manage processes — they do not read or write state.json directly. The state module is the only thing that touches state.json. The platform module is the only thing that touches OS-specific APIs.
+
+### Entry points
+
+The `pods` CLI entry point is defined in `pyproject.toml` as `pods = "pods.__main__:main"`. PyInstaller uses this as the entry point for all binary builds. The gateway is started as a subprocess by `pods init` — it is not imported directly. The agent is started as a subprocess by `pods join` — same pattern.
+
+### Runtime directories
+
+At runtime on each machine, pods uses these directories outside the repo:
+
+```
+~/.pods/
+  state.json       ← coordinator only, source of truth
+  config.json      ← every node, stores coordinator address and local node_id
+  logs/
+    gateway.log    ← gateway stdout/stderr
+    agent.log      ← agent stdout/stderr
+    llama-server.log
+    rpc-server.log
+    exo.log
+
+~/pods/
+  models/          ← downloaded GGUF files
+  llama.cpp/
+    build/
+      bin/
+        llama-server
+        rpc-server
+```
+
+---
+
 ## What Is Explicitly Out of Scope
 
 - Raft or any distributed consensus — single coordinator JSON is the state store
