@@ -1,8 +1,15 @@
+import shutil
 from unittest.mock import MagicMock, patch
 
-from pods.inference.base import EngineStatus
+import pytest
+
+from pods.errors import InferenceError
+from pods.inference.base import EngineStatus, HealthStatus
 from pods.inference.detector import viable_engines
+from pods.inference.exo import ExoEngine
+from pods.inference.fallback import FallbackOrchestrator
 from pods.inference.llamacpp import LlamaCppEngine
+from pods.inference.ollama import OllamaEngine
 from pods.platform.detect import PlatformInfo
 
 
@@ -103,3 +110,96 @@ def test_llamacpp_get_models_empty_when_not_running():
     with patch("httpx.get", side_effect=Exception("refused")):
         models = engine.get_models()
     assert models == []
+
+
+def test_exo_detect_false_when_not_installed():
+    with patch("pods.inference.exo.shutil.which", return_value=None):
+        assert ExoEngine().detect() is False
+
+
+def test_exo_detect_true_when_installed():
+    with patch("pods.inference.exo.shutil.which", return_value="/usr/bin/exo"):
+        assert ExoEngine().detect() is True
+
+
+def test_exo_health_stopped_when_not_running():
+    with patch("httpx.get", side_effect=Exception("refused")):
+        assert ExoEngine().health().status == EngineStatus.STOPPED
+
+
+def test_exo_get_models_empty_when_not_running():
+    with patch("httpx.get", side_effect=Exception("refused")):
+        assert ExoEngine().get_models() == []
+
+
+def test_ollama_detect_false_when_not_installed():
+    with patch("pods.inference.ollama.shutil.which", return_value=None):
+        assert OllamaEngine().detect() is False
+
+
+def test_ollama_detect_true_when_installed():
+    with patch("pods.inference.ollama.shutil.which", return_value="/usr/bin/ollama"):
+        assert OllamaEngine().detect() is True
+
+
+def test_ollama_health_stopped_when_not_running():
+    with patch("httpx.get", side_effect=Exception("refused")):
+        assert OllamaEngine().health().status == EngineStatus.STOPPED
+
+
+def test_ollama_get_models_empty_when_not_running():
+    with patch("httpx.get", side_effect=Exception("refused")):
+        assert OllamaEngine().get_models() == []
+
+
+def test_ollama_stop_with_no_process():
+    OllamaEngine().stop()  # must not raise
+
+
+def test_fallback_raises_when_all_unavailable():
+    with patch("pods.inference.fallback.LlamaCppEngine.detect", return_value=False), \
+         patch("pods.inference.fallback.ExoEngine.detect", return_value=False), \
+         patch("pods.inference.fallback.OllamaEngine.detect", return_value=False):
+        with pytest.raises(InferenceError, match="No inference engine"):
+            FallbackOrchestrator().start_best_engine({})
+
+
+def test_fallback_returns_first_working_engine():
+    mock_engine = MagicMock()
+    mock_engine.detect.return_value = True
+    mock_engine.health.return_value = HealthStatus(EngineStatus.RUNNING)
+
+    with patch("pods.inference.fallback.LlamaCppEngine", return_value=mock_engine):
+        name, engine = FallbackOrchestrator().start_best_engine({})
+
+    assert name == "llama.cpp RPC"
+    mock_engine.start.assert_called_once_with({})
+
+
+def test_fallback_skips_to_exo_when_llamacpp_fails():
+    llamacpp_mock = MagicMock()
+    llamacpp_mock.detect.return_value = True
+    llamacpp_mock.health.return_value = HealthStatus(EngineStatus.STOPPED, "process died")
+
+    exo_mock = MagicMock()
+    exo_mock.detect.return_value = True
+    exo_mock.health.return_value = HealthStatus(EngineStatus.RUNNING)
+
+    with patch("pods.inference.fallback.LlamaCppEngine", return_value=llamacpp_mock), \
+         patch("pods.inference.fallback.ExoEngine", return_value=exo_mock):
+        name, engine = FallbackOrchestrator().start_best_engine({})
+
+    assert name == "exo"
+
+
+def test_fallback_skips_unavailable_engines():
+    ollama_mock = MagicMock()
+    ollama_mock.detect.return_value = True
+    ollama_mock.health.return_value = HealthStatus(EngineStatus.RUNNING)
+
+    with patch("pods.inference.fallback.LlamaCppEngine.detect", return_value=False), \
+         patch("pods.inference.fallback.ExoEngine.detect", return_value=False), \
+         patch("pods.inference.fallback.OllamaEngine", return_value=ollama_mock):
+        name, engine = FallbackOrchestrator().start_best_engine({})
+
+    assert name == "Ollama"
