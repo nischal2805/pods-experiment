@@ -74,7 +74,6 @@ def test_new_pod_fields():
 
 
 import pytest
-from pathlib import Path
 from pods.state.store import StateStore
 from pods.errors import StateError
 
