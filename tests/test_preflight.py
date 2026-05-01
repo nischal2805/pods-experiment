@@ -1,9 +1,8 @@
-import pytest
 from unittest.mock import MagicMock, patch
 
 from pods.errors import NetworkError
 from pods.network.tailscale import TailscaleStatus
-from pods.preflight import CheckResult, PreflightChecker
+from pods.preflight import PreflightChecker
 
 
 def test_all_checks_pass():
