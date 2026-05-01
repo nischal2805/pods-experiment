@@ -1,6 +1,5 @@
-import pytest
 from datetime import datetime
-from pods.state.schema import PodState, Pod, Member, Key, UsageRecord, Model
+from pods.state.schema import PodState, Pod, Member, Key, UsageRecord
 
 
 def test_pod_has_uuid_id():

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
@@ -9,13 +9,13 @@ from pydantic import BaseModel, Field
 class Key(BaseModel):
     key: str
     label: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     total_requests: int = 0
     total_tokens: int = 0
 
 
 class UsageRecord(BaseModel):
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     key: str
     model: str
     prompt_tokens: int
@@ -28,7 +28,7 @@ class Model(BaseModel):
     name: str
     file: str
     size_gb: float
-    added_at: datetime = Field(default_factory=datetime.utcnow)
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     loaded: bool = False
     worker_nodes: list[str] = Field(default_factory=list)
 
@@ -43,15 +43,15 @@ class Member(BaseModel):
     inference_engine: str = "none"  # "llamacpp_rpc" | "exo" | "ollama" | "none"
     connection_type: str = "relay"  # "direct" | "relay"
     models: list[str] = Field(default_factory=list)
-    joined_at: datetime = Field(default_factory=datetime.utcnow)
-    last_seen: datetime = Field(default_factory=datetime.utcnow)
+    joined_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Pod(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     coordinator_ip: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     inference_engine: str = "llamacpp"  # "llamacpp" | "exo" | "ollama"
 
 
