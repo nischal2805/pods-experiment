@@ -169,7 +169,7 @@ def test_fallback_returns_first_working_engine():
     mock_engine.health.return_value = HealthStatus(EngineStatus.RUNNING)
 
     with patch("pods.inference.fallback.LlamaCppEngine", return_value=mock_engine):
-        name, engine = FallbackOrchestrator().start_best_engine({})
+        name, _ = FallbackOrchestrator().start_best_engine({})
 
     assert name == "llama.cpp RPC"
     mock_engine.start.assert_called_once_with({})
@@ -186,7 +186,7 @@ def test_fallback_skips_to_exo_when_llamacpp_fails():
 
     with patch("pods.inference.fallback.LlamaCppEngine", return_value=llamacpp_mock), \
          patch("pods.inference.fallback.ExoEngine", return_value=exo_mock):
-        name, engine = FallbackOrchestrator().start_best_engine({})
+        name, _ = FallbackOrchestrator().start_best_engine({})
 
     assert name == "exo"
 
@@ -199,6 +199,6 @@ def test_fallback_skips_unavailable_engines():
     with patch("pods.inference.fallback.LlamaCppEngine.detect", return_value=False), \
          patch("pods.inference.fallback.ExoEngine.detect", return_value=False), \
          patch("pods.inference.fallback.OllamaEngine", return_value=ollama_mock):
-        name, engine = FallbackOrchestrator().start_best_engine({})
+        name, _ = FallbackOrchestrator().start_best_engine({})
 
     assert name == "Ollama"
