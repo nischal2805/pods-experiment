@@ -26,7 +26,7 @@ def add(name: str):
 
 @cmd.command("load")
 @click.argument("name")
-@click.option("--rpc", "rpc_hosts", multiple=True, help="RPC worker addresses (host:port)")
+@click.option("--rpc", "rpc_hosts", multiple=True, help="Explicit RPC worker addresses (skips auto-discovery)")
 def load(name: str, rpc_hosts: tuple):
     """Load a model into memory and start inference."""
     try:

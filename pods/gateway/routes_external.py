@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.background import BackgroundTask
 
 from ..state.schema import Key, UsageRecord
 from ..state.store import StateStore
@@ -56,7 +57,6 @@ async def chat_completions(
         except Exception:
             pass
 
-    from starlette.background import BackgroundTask
     response.background = BackgroundTask(_record_usage)
     return response
 

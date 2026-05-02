@@ -34,6 +34,7 @@ class Model(BaseModel):
     size_gb: float
     added_at: datetime = Field(default_factory=_utcnow)
     loaded: bool = False
+    loaded_pid: int = 0
     worker_nodes: list[str] = Field(default_factory=list)
 
 
