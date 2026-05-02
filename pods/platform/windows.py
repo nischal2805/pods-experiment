@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 from ..errors import SetupError
 
@@ -27,9 +28,22 @@ class WindowsProxy:
         result = subprocess.run(["wsl", "--"] + args)
         return result.returncode
 
-    def setup_port_forwarding(self, port: int = 8080) -> None:
+    def setup_port_forwarding(self, _port: int = 8080) -> None:
         """Configure netsh portproxy to forward Windows port to WSL2.
 
         Implemented in Phase 2.
         """
         raise NotImplementedError("Port forwarding setup implemented in Phase 2")
+
+
+def main() -> None:
+    """Entry point for the Windows WSL2 proxy binary."""
+    proxy = WindowsProxy()
+    proxy.check_wsl()
+    args = sys.argv[1:]
+    returncode = proxy.run_in_wsl(["pods"] + args)
+    sys.exit(returncode)
+
+
+if __name__ == "__main__":
+    main()

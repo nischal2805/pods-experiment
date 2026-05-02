@@ -1,0 +1,69 @@
+import sys
+
+import click
+
+from ..errors import PodsError
+from ..models.manager import ModelManager
+
+
+@click.group()
+def cmd():
+    """Manage models — add, load, list, register."""
+
+
+@cmd.command("add")
+@click.argument("name")
+def add(name: str):
+    """Download a model by name and register it."""
+    try:
+        mgr = ModelManager()
+        model = mgr.add(name)
+        click.echo(f"✓ Added {model.name} ({model.size_gb:.1f}GB) → {model.file}")
+    except PodsError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+
+@cmd.command("load")
+@click.argument("name")
+@click.option("--rpc", "rpc_hosts", multiple=True, help="RPC worker addresses (host:port)")
+def load(name: str, rpc_hosts: tuple):
+    """Load a model into memory and start inference."""
+    try:
+        mgr = ModelManager()
+        mgr.load(name, list(rpc_hosts) if rpc_hosts else None)
+        click.echo(f"✓ Model '{name}' loaded.")
+    except PodsError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+
+@cmd.command("list")
+def list_models():
+    """List all registered models."""
+    try:
+        mgr = ModelManager()
+        models = mgr.list_models()
+        if not models:
+            click.echo("No models registered. Run 'pods model add <name>'.")
+            return
+        for m in models:
+            status = "● loaded" if m.loaded else "○ available"
+            click.echo(f"  {m.name:20s}  {m.size_gb:5.1f}GB  {status}  {m.file}")
+    except PodsError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+
+@cmd.command("register")
+@click.argument("name")
+@click.argument("filename")
+def register(name: str, filename: str):
+    """Register a GGUF file already in ~/pods/models/ without downloading."""
+    try:
+        mgr = ModelManager()
+        model = mgr.register(name, filename)
+        click.echo(f"✓ Registered {model.name} ({model.size_gb:.1f}GB)")
+    except PodsError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)

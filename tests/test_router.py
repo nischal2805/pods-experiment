@@ -26,7 +26,7 @@ def test_exo_selected_when_llamacpp_unreachable():
     def mock_reachable(url):
         return "52415" in url
     with patch("pods.gateway.router._is_reachable", side_effect=mock_reachable):
-        name, url = select_backend("qwen32b", state)
+        name, _ = select_backend("qwen32b", state)
     assert name == "exo"
 
 
@@ -35,7 +35,7 @@ def test_ollama_selected_when_no_model_loaded():
     def mock_reachable(url):
         return "11434" in url
     with patch("pods.gateway.router._is_reachable", side_effect=mock_reachable):
-        name, url = select_backend("llama3", state)
+        name, _ = select_backend("llama3", state)
     assert name == "ollama"
 
 
