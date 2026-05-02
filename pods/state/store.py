@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from pathlib import Path
 
 from .schema import PodState
@@ -7,6 +8,7 @@ from ..errors import StateError
 
 USAGE_LIMIT = 1000
 STATE_PATH = Path.home() / ".pods" / "state.json"
+_write_lock = threading.RLock()
 
 
 class StateStore:
@@ -33,8 +35,9 @@ class StateStore:
     def save(self, state: PodState) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(state.model_dump_json(indent=2))
-        os.replace(tmp, self.path)
+        with _write_lock:
+            tmp.write_text(state.model_dump_json(indent=2))
+            os.replace(tmp, self.path)
 
     def trim_usage(self, state: PodState) -> PodState:
         if len(state.usage) > USAGE_LIMIT:

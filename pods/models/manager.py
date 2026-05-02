@@ -53,7 +53,13 @@ class ModelManager:
         return self.register(name, path.name, size_gb=entry["size_gb"])
 
     def register(self, name: str, filename: str, size_gb: float = 0.0) -> Model:
-        model_path = MODELS_DIR / filename
+        model_path = (MODELS_DIR / filename).resolve()
+        if not str(model_path).startswith(str(MODELS_DIR.resolve())):
+            raise InferenceError(
+                f"Invalid filename: {filename}",
+                reason="Filename must not escape the models directory",
+                suggestion="Use a plain filename without path separators",
+            )
         if not model_path.exists():
             raise InferenceError(
                 f"Model file not found: {filename}",

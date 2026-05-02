@@ -3,15 +3,24 @@ import signal
 import threading
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from ..models.manager import MODELS_DIR, _start_rpc_on_workers
 from ..inference.llamacpp import LlamaCppEngine
 from ..state.schema import Member
 from ..state.store import StateStore
 
-router = APIRouter()
+def _require_internal(request: Request) -> None:
+    host = request.client.host if request.client else ""
+    if not (host.startswith("100.") or host in ("127.0.0.1", "::1")):
+        raise HTTPException(
+            status_code=403,
+            detail="Internal endpoints require Tailscale network access",
+        )
+
+
+router = APIRouter(dependencies=[Depends(_require_internal)])
 
 
 def get_store() -> StateStore:
@@ -35,7 +44,7 @@ class HeartbeatPayload(BaseModel):
 class AttachPayload(BaseModel):
     node_id: str
     inference_engine: str
-    models: list[str] = []
+    models: list[str] = Field(default_factory=list)
 
 
 @router.post("/internal/register")

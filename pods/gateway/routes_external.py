@@ -54,8 +54,8 @@ async def chat_completions(
                     k.total_tokens += usage_info["prompt_tokens"] + usage_info["completion_tokens"]
                     break
             store.save(s)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[pods] Warning: failed to record usage: {e}")
 
     response.background = BackgroundTask(_record_usage)
     return response
