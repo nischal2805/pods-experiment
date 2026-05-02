@@ -1,6 +1,7 @@
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
+from ..internal_auth import require_internal_access
 from ..inference.llamacpp import LlamaCppEngine
 
 app = FastAPI()
@@ -8,7 +9,7 @@ _engine: LlamaCppEngine | None = None
 
 
 @app.post("/internal/start-rpc")
-def start_rpc() -> dict:
+def start_rpc(_: None = Depends(require_internal_access)) -> dict:
     global _engine
     engine = LlamaCppEngine()
     engine.start({"mode": "worker"})
@@ -17,7 +18,7 @@ def start_rpc() -> dict:
 
 
 @app.post("/internal/reconfigure")
-def reconfigure() -> dict:
+def reconfigure(_: None = Depends(require_internal_access)) -> dict:
     global _engine
     if _engine:
         _engine.stop()
@@ -28,7 +29,7 @@ def reconfigure() -> dict:
 
 
 @app.get("/internal/health")
-def health() -> dict:
+def health(_: None = Depends(require_internal_access)) -> dict:
     return {"status": "ok"}
 
 

@@ -6,6 +6,7 @@ import click
 import httpx
 
 from ..errors import PodsError
+from ..internal_auth import internal_headers
 from ..inference.fallback import FallbackOrchestrator
 
 CONFIG_PATH = Path.home() / ".pods" / "config.json"
@@ -31,13 +32,15 @@ def cmd():
 
         if coordinator_ip and node_id:
             try:
-                httpx.post(
+                r = httpx.post(
                     f"http://{coordinator_ip}:8080/internal/attach",
                     json={"node_id": node_id, "inference_engine": engine_name, "models": models},
+                    headers=internal_headers(),
                     timeout=5,
                 )
-            except Exception:
-                pass  # Coordinator unreachable — continue anyway
+                r.raise_for_status()
+            except Exception as e:
+                click.echo(f"  ⚠ Could not notify coordinator ({e}) — inference still active locally", err=True)
 
     except PodsError as e:
         click.echo(str(e), err=True)

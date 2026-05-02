@@ -11,7 +11,9 @@ def _utcnow() -> datetime:
 
 
 class Key(BaseModel):
-    key: str
+    key_id: str
+    key_hash: str = ""
+    key: str | None = None  # legacy plaintext key for backward compatibility
     label: str
     created_at: datetime = Field(default_factory=_utcnow)
     total_requests: int = 0
@@ -20,7 +22,7 @@ class Key(BaseModel):
 
 class UsageRecord(BaseModel):
     timestamp: datetime = Field(default_factory=_utcnow)
-    key: str
+    key_id: str
     model: str
     prompt_tokens: int
     completion_tokens: int

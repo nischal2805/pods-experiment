@@ -1,5 +1,7 @@
 import secrets
 import string
+import hashlib
+import hmac
 
 from .schema import Key, Member, Pod
 
@@ -27,4 +29,32 @@ def new_member(
 def new_key(label: str) -> Key:
     alphabet = string.ascii_letters + string.digits
     random_part = "".join(secrets.choice(alphabet) for _ in range(32))
-    return Key(key=f"pk_{random_part}", label=label)
+    raw_key = f"pk_{random_part}"
+    return Key(
+        key_id=key_id_from_token(raw_key),
+        key_hash=hash_key(raw_key),
+        label=label,
+    )
+
+
+def hash_key(raw_key: str) -> str:
+    return hashlib.sha256(raw_key.encode()).hexdigest()
+
+
+def verify_key(raw_key: str, key_hash: str) -> bool:
+    return hmac.compare_digest(hash_key(raw_key), key_hash)
+
+
+def key_id_from_token(raw_key: str) -> str:
+    return raw_key[:12]
+
+
+def new_raw_key(label: str) -> tuple[str, Key]:
+    alphabet = string.ascii_letters + string.digits
+    random_part = "".join(secrets.choice(alphabet) for _ in range(32))
+    raw_key = f"pk_{random_part}"
+    return raw_key, Key(
+        key_id=key_id_from_token(raw_key),
+        key_hash=hash_key(raw_key),
+        label=label,
+    )

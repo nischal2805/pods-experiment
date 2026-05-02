@@ -8,15 +8,15 @@ from ..state.store import StateStore
 
 @click.command()
 @click.option("--limit", default=50, help="Number of records to show")
-@click.option("--key", default=None, help="Filter by API key label")
-def cmd(limit: int, key: str | None):
+@click.option("--key-id", default=None, help="Filter by API key ID prefix")
+def cmd(limit: int, key_id: str | None):
     """Show usage logs in reverse chronological order."""
     try:
         store = StateStore()
         state = store.load()
         records = list(reversed(state.usage))
-        if key:
-            records = [r for r in records if r.key == key]
+        if key_id:
+            records = [r for r in records if r.key_id == key_id]
         records = records[:limit]
         if not records:
             click.echo("No usage records found.")

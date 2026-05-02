@@ -7,6 +7,7 @@ import click
 import httpx
 
 from ..errors import PodsError
+from ..internal_auth import internal_headers
 from ..state.store import StateStore
 from ..state.schema import PodState
 
@@ -30,11 +31,15 @@ def cmd():
             config = json.loads((CONFIG_PATH).read_text())
             coordinator_ip = config.get("coordinator_ip")
             if coordinator_ip:
-                r = httpx.get(f"http://{coordinator_ip}:8080/internal/state", timeout=5)
+                r = httpx.get(
+                    f"http://{coordinator_ip}:8080/internal/state",
+                    headers=internal_headers(),
+                    timeout=5,
+                )
                 if r.status_code == 200:
                     state = PodState.model_validate(r.json())
         except Exception:
-            pass
+            pass  # will fall back to local state.json below
 
         if state is None:
             store = StateStore()

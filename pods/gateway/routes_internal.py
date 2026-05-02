@@ -3,24 +3,17 @@ import signal
 import threading
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from ..internal_auth import require_internal_access
 from ..models.manager import MODELS_DIR, _start_rpc_on_workers
 from ..inference.llamacpp import LlamaCppEngine
 from ..state.schema import Member
 from ..state.store import StateStore
 
-def _require_internal(request: Request) -> None:
-    host = request.client.host if request.client else ""
-    if not (host.startswith("100.") or host in ("127.0.0.1", "::1")):
-        raise HTTPException(
-            status_code=403,
-            detail="Internal endpoints require Tailscale network access",
-        )
 
-
-router = APIRouter(dependencies=[Depends(_require_internal)])
+router = APIRouter(dependencies=[Depends(require_internal_access)])
 
 
 def get_store() -> StateStore:
@@ -49,7 +42,6 @@ class AttachPayload(BaseModel):
 
 @router.post("/internal/register")
 def register(payload: RegisterPayload, store: StateStore = Depends(get_store)):
-    state = store.load()
     now = datetime.now(timezone.utc)
     member = Member(
         node_id=payload.node_id,
@@ -61,43 +53,51 @@ def register(payload: RegisterPayload, store: StateStore = Depends(get_store)):
         joined_at=now,
         last_seen=now,
     )
-    existing_ids = {m.node_id for m in state.members}
-    if payload.node_id not in existing_ids:
-        state.members.append(member)
-        store.save(state)
-    return {"status": "registered", "node_id": member.node_id}
+
+    def _mutate(state):
+        existing_ids = {m.node_id for m in state.members}
+        if payload.node_id not in existing_ids:
+            state.members.append(member)
+
+    store.update(_mutate)
+    return {"status": "registered", "node_id": payload.node_id}
 
 
 @router.post("/internal/heartbeat")
 def heartbeat(payload: HeartbeatPayload, store: StateStore = Depends(get_store)):
-    state = store.load()
-    for member in state.members:
-        if member.node_id == payload.node_id:
-            member.last_seen = datetime.now(timezone.utc)
-            member.connection_type = payload.connection_type
-            store.save(state)
-            return {"status": "ok"}
-    return {"status": "unknown_node"}
+    def _mutate(state):
+        for member in state.members:
+            if member.node_id == payload.node_id:
+                member.last_seen = datetime.now(timezone.utc)
+                member.connection_type = payload.connection_type
+                return True
+        return False
+
+    return {"status": "ok"} if store.update(_mutate) else {"status": "unknown_node"}
 
 
 @router.post("/internal/attach")
 def attach(payload: AttachPayload, store: StateStore = Depends(get_store)):
-    state = store.load()
-    for member in state.members:
-        if member.node_id == payload.node_id:
-            member.inference_engine = payload.inference_engine
-            member.models = payload.models
-            member.last_seen = datetime.now(timezone.utc)
-            store.save(state)
-            loaded_model = next((m for m in state.models if m.loaded), None)
-            if loaded_model is not None and member.role == "worker":
-                threading.Thread(
-                    target=_restart_llamacpp,
-                    args=(loaded_model.name, loaded_model.loaded_pid, store),
-                    daemon=True,
-                ).start()
-            return {"status": "ok"}
-    return {"status": "unknown_node"}
+    def _mutate(state):
+        for member in state.members:
+            if member.node_id == payload.node_id:
+                member.inference_engine = payload.inference_engine
+                member.models = payload.models
+                member.last_seen = datetime.now(timezone.utc)
+                loaded_model = next((m for m in state.models if m.loaded), None)
+                if loaded_model is not None and member.role == "worker":
+                    return ("ok", loaded_model.name, loaded_model.loaded_pid)
+                return ("ok", None, 0)
+        return ("unknown_node", None, 0)
+
+    status, model_name, loaded_pid = store.update(_mutate)
+    if status == "ok" and model_name:
+        threading.Thread(
+            target=_restart_llamacpp,
+            args=(model_name, loaded_pid, store),
+            daemon=True,
+        ).start()
+    return {"status": status}
 
 
 def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
@@ -124,14 +124,17 @@ def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
     except Exception:
         return
 
-    fresh = store.load()
-    for m in fresh.models:
-        if m.name == model_name:
-            m.loaded = True
-            m.worker_nodes = rpc_hosts
-            m.loaded_pid = engine._process.pid if engine._process else 0
-            break
-    store.save(fresh)
+    loaded_pid = engine._process.pid if engine._process else 0
+
+    def _mutate(fresh):
+        for m in fresh.models:
+            if m.name == model_name:
+                m.loaded = True
+                m.worker_nodes = rpc_hosts
+                m.loaded_pid = loaded_pid
+                break
+
+    store.update(_mutate)
 
 
 @router.post("/internal/start-rpc")
@@ -145,4 +148,8 @@ def start_rpc():
 @router.get("/internal/state")
 def get_state(store: StateStore = Depends(get_store)):
     state = store.load()
-    return state.model_dump()
+    data = state.model_dump()
+    for key_entry in data.get("keys", []):
+        key_entry.pop("key_hash", None)
+        key_entry.pop("key", None)
+    return data

@@ -1,6 +1,7 @@
 import sys
 import json
 import subprocess
+import secrets
 from pathlib import Path
 
 import click
@@ -53,7 +54,13 @@ def cmd(name: str):
         state = PodState(pod=pod, members=[member])
         store.save(state)
 
-        config = {"coordinator_ip": tailscale_ip, "node_id": member.node_id, "role": "coordinator"}
+        internal_token = secrets.token_urlsafe(32)
+        config = {
+            "coordinator_ip": tailscale_ip,
+            "node_id": member.node_id,
+            "role": "coordinator",
+            "internal_token": internal_token,
+        }
         CONFIG_PATH.write_text(json.dumps(config, indent=2))
 
         log = open(LOGS_DIR / "gateway.log", "a")

@@ -3,6 +3,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from ..state.schema import Key
 from ..state.store import StateStore
+from ..state.defaults import verify_key
 
 _bearer = HTTPBearer()
 
@@ -18,7 +19,7 @@ def validate_api_key(
         raise HTTPException(status_code=503, detail="State unavailable")
 
     for key in state.keys:
-        if key.key == token:
+        if key.key_hash and verify_key(token, key.key_hash):
             return key
 
     raise HTTPException(

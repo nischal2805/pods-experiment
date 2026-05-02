@@ -37,23 +37,24 @@ async def chat_completions(
 
     async def _record_usage():
         try:
-            s = store.load()
-            record = UsageRecord(
-                key=key.key,
-                model=model,
-                prompt_tokens=usage_info["prompt_tokens"],
-                completion_tokens=usage_info["completion_tokens"],
-                backend=backend_name,
-                latency_ms=usage_info["latency_ms"],
-            )
-            s.usage.append(record)
-            s = store.trim_usage(s)
-            for k in s.keys:
-                if k.key == key.key:
-                    k.total_requests += 1
-                    k.total_tokens += usage_info["prompt_tokens"] + usage_info["completion_tokens"]
-                    break
-            store.save(s)
+            def _mutate(s):
+                record = UsageRecord(
+                    key_id=key.key_id,
+                    model=model,
+                    prompt_tokens=usage_info["prompt_tokens"],
+                    completion_tokens=usage_info["completion_tokens"],
+                    backend=backend_name,
+                    latency_ms=usage_info["latency_ms"],
+                )
+                s.usage.append(record)
+                s = store.trim_usage(s)
+                for k in s.keys:
+                    if k.key_id == key.key_id:
+                        k.total_requests += 1
+                        k.total_tokens += usage_info["prompt_tokens"] + usage_info["completion_tokens"]
+                        break
+
+            store.update(_mutate)
         except Exception as e:
             print(f"[pods] Warning: failed to record usage: {e}")
 

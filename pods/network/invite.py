@@ -4,11 +4,11 @@ import json
 from ..errors import NetworkError
 
 
-def encode_invite(coordinator_ip: str, authkey: str, pod_name: str) -> str:
+def encode_invite(coordinator_ip: str, pod_name: str, internal_token: str) -> str:
     payload = json.dumps({
         "coordinator_ip": coordinator_ip,
-        "authkey": authkey,
         "pod_name": pod_name,
+        "internal_token": internal_token,
     })
     return base64.urlsafe_b64encode(payload.encode()).decode()
 
@@ -19,7 +19,7 @@ def decode_invite(link: str) -> dict:
         parsed = json.loads(data)
         if not isinstance(parsed, dict):
             raise ValueError("Payload is not a JSON object")
-        required = {"coordinator_ip", "authkey", "pod_name"}
+        required = {"coordinator_ip", "pod_name", "internal_token"}
         missing = required - parsed.keys()
         if missing:
             raise ValueError(f"Missing fields: {missing}")

@@ -2,16 +2,19 @@ import threading
 
 import httpx
 
+from ..internal_auth import internal_headers
 
 def _send_heartbeat(coordinator_url: str, node_id: str, connection_type: str = "relay") -> None:
     try:
-        httpx.post(
+        response = httpx.post(
             f"{coordinator_url}/internal/heartbeat",
             json={"node_id": node_id, "connection_type": connection_type},
+            headers=internal_headers(),
             timeout=5,
         )
-    except Exception:
-        pass
+        response.raise_for_status()
+    except Exception as e:
+        print(f"[pods] Warning: heartbeat failed: {e}")
 
 
 class HeartbeatThread(threading.Thread):

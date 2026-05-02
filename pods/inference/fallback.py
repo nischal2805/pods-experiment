@@ -46,6 +46,10 @@ class FallbackOrchestrator:
                 print(f"  → {exc}")
                 if engine_name != "Ollama":
                     print(f"  → Falling back to next engine")
+                try:
+                    engine.stop()
+                except Exception:
+                    pass
 
         detail = "\n".join(f"  {k}: {v}" for k, v in errors.items())
         raise InferenceError(

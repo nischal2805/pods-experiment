@@ -6,15 +6,15 @@ from pods.errors import NetworkError
 
 
 def test_encode_decode_roundtrip():
-    link = encode_invite("100.1.2.3", "tskey-abc123", "mypod")
+    link = encode_invite("100.1.2.3", "mypod", "internal-secret")
     decoded = decode_invite(link)
     assert decoded["coordinator_ip"] == "100.1.2.3"
-    assert decoded["authkey"] == "tskey-abc123"
     assert decoded["pod_name"] == "mypod"
+    assert decoded["internal_token"] == "internal-secret"
 
 
 def test_encoded_link_is_url_safe():
-    link = encode_invite("100.1.2.3", "tskey-abc123", "mypod")
+    link = encode_invite("100.1.2.3", "mypod", "internal-secret")
     assert "+" not in link
     assert "/" not in link
 

@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 
 from ..errors import InferenceError
+from ..internal_auth import internal_headers
 from ..inference.llamacpp import LlamaCppEngine
 from ..state.schema import Model, PodState
 from ..state.store import StateStore
@@ -25,7 +26,11 @@ def _start_rpc_on_workers(state: PodState) -> list[str]:
     rpc_hosts = []
     for w in workers:
         try:
-            r = httpx.post(f"http://{w.tailscale_ip}:8082/internal/start-rpc", timeout=10)
+            r = httpx.post(
+                f"http://{w.tailscale_ip}:8082/internal/start-rpc",
+                headers=internal_headers(),
+                timeout=10,
+            )
             if r.status_code == 200:
                 rpc_hosts.append(f"{w.tailscale_ip}:50052")
                 print(f"  [pods] Started rpc-server on {w.name} ({w.tailscale_ip})")
@@ -66,12 +71,13 @@ class ModelManager:
                 reason=f"{model_path} does not exist",
                 suggestion="Run 'pods model add <name>' to download the model first",
             )
-        state = self.store.load()
-        model = Model(name=name, file=filename, size_gb=size_gb)
-        state.models = [m for m in state.models if m.name != name]
-        state.models.append(model)
-        self.store.save(state)
-        return model
+        def _mutate(state: PodState) -> Model:
+            model = Model(name=name, file=filename, size_gb=size_gb)
+            state.models = [m for m in state.models if m.name != name]
+            state.models.append(model)
+            return model
+
+        return self.store.update(_mutate)
 
     def load(self, name: str, rpc_hosts: list[str] | None = None) -> None:
         state = self.store.load()
@@ -102,11 +108,18 @@ class ModelManager:
             "rpc_hosts": rpc_hosts,
         }
         engine.start(config)
-        model.loaded = True
-        model.worker_nodes = rpc_hosts
-        model.loaded_pid = engine._process.pid if engine._process else 0
-        self.store.save(state)
+        loaded_pid = engine._process.pid if engine._process else 0
+        self.store.update(lambda s: _mark_model_loaded(s, name, rpc_hosts, loaded_pid))
         print(f"[pods] Model '{name}' ready.")
 
     def list_models(self) -> list[Model]:
         return self.store.load().models
+
+
+def _mark_model_loaded(state: PodState, name: str, rpc_hosts: list[str], loaded_pid: int) -> None:
+    for model in state.models:
+        if model.name == name:
+            model.loaded = True
+            model.worker_nodes = rpc_hosts
+            model.loaded_pid = loaded_pid
+            return

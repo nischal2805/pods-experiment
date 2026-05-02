@@ -11,7 +11,7 @@ def test_pod_has_uuid_id():
 def test_schema_roundtrip():
     pod = Pod(name="test", coordinator_ip="100.1.2.3")
     member = Member(name="node1", tailscale_ip="100.1.2.3", role="coordinator", os="linux")
-    key = Key(key="pk_abc123", label="test-key")
+    key = Key(key_id="pk_abc123xxxx", key_hash="0123456789abcdef", label="test-key")
     state = PodState(pod=pod, members=[member], keys=[key])
 
     data = state.model_dump_json()
@@ -19,7 +19,7 @@ def test_schema_roundtrip():
 
     assert restored.pod.name == "test"
     assert restored.members[0].tailscale_ip == "100.1.2.3"
-    assert restored.keys[0].key == "pk_abc123"
+    assert restored.keys[0].key_id == "pk_abc123xxxx"
 
 
 def test_member_defaults():
@@ -32,7 +32,7 @@ def test_member_defaults():
 
 def test_usage_record_fields():
     rec = UsageRecord(
-        key="pk_x", model="qwen32b",
+        key_id="pk_x", model="qwen32b",
         prompt_tokens=10, completion_tokens=20,
         backend="llamacpp", latency_ms=150,
     )
@@ -45,8 +45,9 @@ from pods.state.defaults import new_pod, new_member, new_key
 
 def test_new_key_format():
     key = new_key("my-label")
-    assert key.key.startswith("pk_")
-    assert len(key.key) == 35  # "pk_" + 32 chars
+    assert key.key_id.startswith("pk_")
+    assert len(key.key_id) == 12
+    assert len(key.key_hash) == 64
     assert key.label == "my-label"
     assert key.total_requests == 0
     assert key.total_tokens == 0
@@ -55,7 +56,7 @@ def test_new_key_format():
 def test_new_key_is_unique():
     k1 = new_key("a")
     k2 = new_key("b")
-    assert k1.key != k2.key
+    assert k1.key_hash != k2.key_hash
 
 
 def test_new_member_defaults():
@@ -124,7 +125,7 @@ def test_trim_usage_keeps_last_1000(tmp_path):
     pod = Pod(name="mypod", coordinator_ip="100.2.3.4")
     records = [
         UsageRecord(
-            key="pk_x", model="m",
+            key_id="pk_x", model="m",
             prompt_tokens=1, completion_tokens=1,
             backend="llamacpp", latency_ms=100,
         )
@@ -141,7 +142,7 @@ def test_trim_usage_under_limit_unchanged(tmp_path):
     pod = Pod(name="mypod", coordinator_ip="100.2.3.4")
     records = [
         UsageRecord(
-            key="pk_x", model="m",
+            key_id="pk_x", model="m",
             prompt_tokens=1, completion_tokens=1,
             backend="llamacpp", latency_ms=100,
         )
