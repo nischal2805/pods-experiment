@@ -1,3 +1,4 @@
+import json
 import stat
 import pytest
 from pathlib import Path
@@ -79,7 +80,26 @@ def test_validate_both_present_and_executable(tmp_path):
         validate_existing_binaries()  # must not raise
 
 
-def test_download_raises_not_implemented():
-    info = PlatformInfo(os="linux", gpu_vendor="nvidia", cuda_version="12.2", vram_gb=8)
-    with pytest.raises(NotImplementedError):
+def test_download_unsupported_platform():
+    info = PlatformInfo(os="windows", gpu_vendor="none")
+    with pytest.raises(PlatformError, match="Unsupported platform"):
         download_and_install_binaries(info)
+
+
+def test_download_api_failure():
+    info = PlatformInfo(os="linux", gpu_vendor="none")
+    with patch("pods.platform.setup.urllib.request.urlopen", side_effect=OSError("timeout")):
+        with pytest.raises(PlatformError, match="Failed to fetch"):
+            download_and_install_binaries(info)
+
+
+def test_download_no_matching_asset():
+    info = PlatformInfo(os="linux", gpu_vendor="nvidia", cuda_version="12.2", vram_gb=8)
+    release_data = {"tag_name": "b1234", "assets": [{"name": "llama-windows-x64.zip", "browser_download_url": "http://x"}]}
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(release_data).encode()
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    with patch("pods.platform.setup.urllib.request.urlopen", return_value=mock_resp):
+        with pytest.raises(PlatformError, match="No matching"):
+            download_and_install_binaries(info)
