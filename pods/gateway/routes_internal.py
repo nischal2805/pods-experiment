@@ -1,3 +1,4 @@
+import logging
 import os
 import signal
 import threading
@@ -11,6 +12,8 @@ from ..models.manager import MODELS_DIR, _start_rpc_on_workers
 from ..inference.llamacpp import LlamaCppEngine
 from ..state.schema import Member
 from ..state.store import StateStore
+
+_log = logging.getLogger("pods.gateway")
 
 
 router = APIRouter(dependencies=[Depends(require_internal_access)])
@@ -121,7 +124,8 @@ def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
     }
     try:
         engine.start(config)
-    except Exception:
+    except Exception as exc:
+        _log.error("LlamaCpp restart failed for model '%s': %s", model_name, exc)
         return
 
     loaded_pid = engine._process.pid if engine._process else 0
@@ -135,14 +139,6 @@ def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
                 break
 
     store.update(_mutate)
-
-
-@router.post("/internal/start-rpc")
-def start_rpc():
-    from ..inference.llamacpp import LlamaCppEngine as _E
-    engine = _E()
-    engine.start({"mode": "worker"})
-    return {"status": "started"}
 
 
 @router.get("/internal/state")
