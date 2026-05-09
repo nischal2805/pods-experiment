@@ -1,0 +1,151 @@
+import logging
+import os
+import signal
+import threading
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+
+from ..internal_auth import require_internal_access
+from ..models.manager import MODELS_DIR, _start_rpc_on_workers
+from ..inference.llamacpp import LlamaCppEngine
+from ..state.schema import Member
+from ..state.store import StateStore
+
+_log = logging.getLogger("pods.gateway")
+
+
+router = APIRouter(dependencies=[Depends(require_internal_access)])
+
+
+def get_store() -> StateStore:
+    return StateStore()
+
+
+class RegisterPayload(BaseModel):
+    node_id: str
+    name: str
+    tailscale_ip: str
+    role: str
+    os: str
+    gpu_vram_gb: int = 0
+
+
+class HeartbeatPayload(BaseModel):
+    node_id: str
+    connection_type: str = "relay"
+
+
+class AttachPayload(BaseModel):
+    node_id: str
+    inference_engine: str
+    models: list[str] = Field(default_factory=list)
+
+
+@router.post("/internal/register")
+def register(payload: RegisterPayload, store: StateStore = Depends(get_store)):
+    now = datetime.now(timezone.utc)
+    member = Member(
+        node_id=payload.node_id,
+        name=payload.name,
+        tailscale_ip=payload.tailscale_ip,
+        role=payload.role,
+        os=payload.os,
+        gpu_vram_gb=payload.gpu_vram_gb,
+        joined_at=now,
+        last_seen=now,
+    )
+
+    def _mutate(state):
+        existing_ids = {m.node_id for m in state.members}
+        if payload.node_id not in existing_ids:
+            state.members.append(member)
+
+    store.update(_mutate)
+    return {"status": "registered", "node_id": payload.node_id}
+
+
+@router.post("/internal/heartbeat")
+def heartbeat(payload: HeartbeatPayload, store: StateStore = Depends(get_store)):
+    def _mutate(state):
+        for member in state.members:
+            if member.node_id == payload.node_id:
+                member.last_seen = datetime.now(timezone.utc)
+                member.connection_type = payload.connection_type
+                return True
+        return False
+
+    return {"status": "ok"} if store.update(_mutate) else {"status": "unknown_node"}
+
+
+@router.post("/internal/attach")
+def attach(payload: AttachPayload, store: StateStore = Depends(get_store)):
+    def _mutate(state):
+        for member in state.members:
+            if member.node_id == payload.node_id:
+                member.inference_engine = payload.inference_engine
+                member.models = payload.models
+                member.last_seen = datetime.now(timezone.utc)
+                loaded_model = next((m for m in state.models if m.loaded), None)
+                if loaded_model is not None and member.role == "worker":
+                    return ("ok", loaded_model.name, loaded_model.loaded_pid)
+                return ("ok", None, 0)
+        return ("unknown_node", None, 0)
+
+    status, model_name, loaded_pid = store.update(_mutate)
+    if status == "ok" and model_name:
+        threading.Thread(
+            target=_restart_llamacpp,
+            args=(model_name, loaded_pid, store),
+            daemon=True,
+        ).start()
+    return {"status": status}
+
+
+def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
+    if old_pid:
+        try:
+            os.kill(old_pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+
+    state = store.load()
+    model = next((m for m in state.models if m.name == model_name), None)
+    if model is None:
+        return
+
+    rpc_hosts = _start_rpc_on_workers(state)
+    engine = LlamaCppEngine()
+    config = {
+        "mode": "coordinator",
+        "model_path": str(MODELS_DIR / model.file),
+        "rpc_hosts": rpc_hosts,
+    }
+    try:
+        engine.start(config)
+    except Exception as exc:
+        _log.error("LlamaCpp restart failed for model '%s': %s", model_name, exc)
+        return
+
+    loaded_pid = engine._process.pid if engine._process else 0
+
+    def _mutate(fresh):
+        for m in fresh.models:
+            if m.name == model_name:
+                m.loaded = True
+                m.worker_nodes = rpc_hosts
+                m.loaded_pid = loaded_pid
+                break
+
+    store.update(_mutate)
+
+
+@router.get("/internal/state")
+def get_state(store: StateStore = Depends(get_store)):
+    state = store.load()
+    data = state.model_dump()
+    for key_entry in data.get("keys", []):
+        key_entry.pop("key_hash", None)
+        key_entry.pop("key", None)
+    return data
