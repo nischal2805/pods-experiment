@@ -5,9 +5,11 @@ PODS_GITHUB="https://github.com/nischal2805/pods-experiment"
 INSTALL_BIN="${HOME}/.local/bin"
 
 # Support both: bash install.sh (from cloned repo) and curl | bash
+_PIPED=0
 if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "/dev/stdin" && -f "$(dirname "${BASH_SOURCE[0]}")/pyproject.toml" ]]; then
     REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 else
+    _PIPED=1
     REPO_DIR="${HOME}/.pods-src"
     if [[ ! -d "${REPO_DIR}/.git" ]]; then
         echo "[pods] Cloning pods repository..."
@@ -16,6 +18,8 @@ else
         echo "[pods] Updating existing clone at ${REPO_DIR}..."
         git -C "${REPO_DIR}" pull --ff-only
     fi
+    # Re-exec from fresh clone so cached curl response never runs stale code
+    exec bash "${REPO_DIR}/install.sh"
 fi
 BOLD="\033[1m"
 GREEN="\033[32m"
