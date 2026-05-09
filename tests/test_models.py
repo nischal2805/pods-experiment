@@ -25,7 +25,7 @@ def test_list_names():
     assert "qwen7b" in names
     assert "gemma9b" in names
     assert "llama8b" in names
-    assert len(names) == 4
+    assert len(names) == 6
 
 
 def test_add_unknown_model_raises(tmp_path):
