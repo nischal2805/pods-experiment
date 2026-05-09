@@ -52,9 +52,9 @@ class ModelManager:
             raise InferenceError(
                 f"Unknown model '{name}'",
                 reason=f"'{name}' is not in the built-in registry",
-                suggestion="Available: qwen32b, qwen7b, gemma9b, llama8b",
+                suggestion="Run 'pods model list' to see available models",
             )
-        path = download(name, entry["repo"], entry["filename"], entry["size_gb"])
+        path = download(name, entry["repo"], entry["filename"], entry["size_gb"], shards=entry.get("shards"))
         return self.register(name, path.name, size_gb=entry["size_gb"])
 
     def register(self, name: str, filename: str, size_gb: float = 0.0) -> Model:

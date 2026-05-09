@@ -11,7 +11,8 @@ from pods.state.store import StateStore
 def test_resolve_known_name():
     entry = resolve("qwen32b")
     assert entry["repo"] == "Qwen/Qwen2.5-32B-Instruct-GGUF"
-    assert entry["filename"] == "qwen2.5-32b-instruct-q4_k_m.gguf"
+    assert entry["filename"] == "qwen2.5-32b-instruct-q4_k_m-00001-of-00005.gguf"
+    assert len(entry["shards"]) == 5
 
 
 def test_resolve_unknown_name():
@@ -23,7 +24,7 @@ def test_list_names():
     names = list_names()
     assert "qwen32b" in names
     assert "qwen7b" in names
-    assert "gemma9b" in names
+    assert "phi3.5mini" in names
     assert "llama8b" in names
     assert len(names) == 6
 
