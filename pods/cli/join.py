@@ -116,7 +116,7 @@ def cmd(link: str, authkey: str | None):
 
         log = open(LOGS_DIR / "agent.log", "a")
         subprocess.Popen(
-            ["uvicorn", "pods.agent.server:app", "--host", "0.0.0.0", "--port", "8082", "--log-level", "warning"],
+            [sys.executable, "-m", "uvicorn", "pods.agent.server:app", "--host", "0.0.0.0", "--port", "8082", "--log-level", "warning"],
             stdout=log, stderr=log,
         )
 

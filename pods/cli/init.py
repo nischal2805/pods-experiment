@@ -65,7 +65,7 @@ def cmd(name: str):
 
         log = open(LOGS_DIR / "gateway.log", "a")
         subprocess.Popen(
-            ["uvicorn", "pods.gateway.app:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "warning"],
+            [sys.executable, "-m", "uvicorn", "pods.gateway.app:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "warning"],
             stdout=log, stderr=log,
         )
 
