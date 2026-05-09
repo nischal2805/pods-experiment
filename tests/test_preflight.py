@@ -5,17 +5,29 @@ from pods.network.tailscale import TailscaleStatus
 from pods.preflight import PreflightChecker
 
 
+def _smi_run(cmd, **_kw):
+    """Fake subprocess.run for nvidia-smi calls."""
+    r = MagicMock()
+    r.returncode = 0
+    if "--query-gpu" in cmd:
+        r.stdout = "535.86.10\n"
+    else:
+        r.stdout = "| CUDA Version: 12.2     |\n"
+    return r
+
+
 def test_all_checks_pass():
     checker = PreflightChecker()
     with patch("pods.preflight.get_status", return_value=TailscaleStatus(running=True, peers=[])), \
          patch("pods.preflight.get_ip", return_value="100.1.2.3"), \
          patch("pods.preflight.shutil.which", return_value="/usr/bin/nvidia-smi"), \
+         patch("pods.preflight.subprocess.run", side_effect=_smi_run), \
          patch("pods.preflight.shutil.disk_usage", return_value=MagicMock(free=50 * 1024 ** 3)), \
          patch("pods.preflight.socket.socket") as mock_sock:
         mock_sock.return_value.__enter__.return_value.connect_ex.return_value = 1  # ports free
         results = checker.run()
     assert all(r.status != "block" for r in results)
-    assert len(results) == 7
+    assert len(results) == 8
 
 
 def test_tailscale_not_running_blocks_at_check_1():
@@ -46,7 +58,7 @@ def test_no_nvidia_driver_warns_but_continues():
         results = checker.run()
     driver_result = next(r for r in results if r.name == "NVIDIA driver")
     assert driver_result.status == "warn"
-    assert len(results) == 7  # all 7 ran
+    assert len(results) == 8  # all 8 ran
 
 
 def test_port_8080_occupied_blocks():

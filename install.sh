@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PODS_GITHUB="https://github.com/nischal2805/pods-experiment"
 INSTALL_BIN="${HOME}/.local/bin"
+
+# Support both: bash install.sh (from cloned repo) and curl | bash
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "/dev/stdin" && -f "$(dirname "${BASH_SOURCE[0]}")/pyproject.toml" ]]; then
+    REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    REPO_DIR="${HOME}/.pods-src"
+    if [[ ! -d "${REPO_DIR}/.git" ]]; then
+        echo "[pods] Cloning pods repository..."
+        git clone --depth=1 "${PODS_GITHUB}" "${REPO_DIR}"
+    else
+        echo "[pods] Updating existing clone at ${REPO_DIR}..."
+        git -C "${REPO_DIR}" pull --ff-only
+    fi
+fi
 BOLD="\033[1m"
 GREEN="\033[32m"
 YELLOW="\033[33m"
@@ -108,10 +122,10 @@ echo ""
 echo "  On the COORDINATOR machine:"
 echo "    pods init <pod-name>"
 echo "    pods keygen my-api-key"
-echo "    pods invite --authkey <tailscale-auth-key>"
+echo "    pods invite                            # prints invite link"
 echo ""
 echo "  On each WORKER machine:"
-echo "    pods join <invite-link>"
+echo "    pods join <invite-link> --authkey <tailscale-auth-key>"
 echo "    pods attach"
 echo ""
 echo "  Load a model and start inferencing:"

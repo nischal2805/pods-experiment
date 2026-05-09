@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/ -q --tb=short
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.VERSION }}" \
+            --title "Pods ${{ steps.version.outputs.VERSION }}" \
+            --notes "## Install
+
+          **Linux / WSL2 / macOS** — run this in your terminal:
+
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+          \`\`\`
+
+          Or clone and run locally:
+
+          \`\`\`bash
+          git clone https://github.com/${{ github.repository }}
+          cd pods
+          bash install.sh
+          \`\`\`
+
+          ## Requirements
+          - Linux, WSL2 (Ubuntu), or macOS
+          - Python 3.11+
+          - Tailscale installed and logged in
+          - NVIDIA GPU with CUDA (optional — falls back to CPU)
+
+          ## Quick start
+
+          **Coordinator machine:**
+          \`\`\`
+          pods init my-cluster
+          pods keygen default
+          pods invite
+          \`\`\`
+
+          **Each worker machine:**
+          \`\`\`
+          pods join <invite-link> --authkey <tailscale-auth-key>
+          pods attach
+          \`\`\`
+
+          **Load a model and run:**
+          \`\`\`
+          pods model add qwen7b
+          pods model load qwen7b
+          # API now at http://localhost:8080
+          \`\`\`
+
+          Get a Tailscale auth key at https://login.tailscale.com/admin/settings/keys"
