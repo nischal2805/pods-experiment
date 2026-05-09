@@ -13,7 +13,7 @@ else
     REPO_DIR="${HOME}/.pods-src"
     if [[ ! -d "${REPO_DIR}/.git" ]]; then
         echo "[pods] Cloning pods repository..."
-        git clone --depth=1 "${PODS_GITHUB}" "${REPO_DIR}"
+        git clone "${PODS_GITHUB}" "${REPO_DIR}"
     else
         echo "[pods] Updating existing clone at ${REPO_DIR}..."
         git -C "${REPO_DIR}" pull --ff-only
