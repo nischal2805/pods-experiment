@@ -66,11 +66,25 @@ if [[ -z "$PYTHON" ]]; then
 fi
 ok "Python: $($PYTHON --version)"
 
-# ── pip ──────────────────────────────────────────────────────────────────────
-if ! "$PYTHON" -m pip --version &>/dev/null; then
-    info "Installing pip..."
-    curl -fsSL https://bootstrap.pypa.io/get-pip.py | "$PYTHON"
+# ── venv (avoids PEP 668 externally-managed-environment error) ───────────────
+VENV_DIR="${HOME}/.pods-venv"
+if [[ ! -d "${VENV_DIR}" ]]; then
+    info "Creating venv at ${VENV_DIR}..."
+    # python3-venv may not be installed
+    if ! "$PYTHON" -m venv --help &>/dev/null 2>&1; then
+        if [[ "$OS" == "mac" ]]; then
+            warn "python3-venv missing. Run: brew install python@3.11"
+            exit 1
+        else
+            sudo apt-get install -y "$(basename "$PYTHON")-venv" 2>/dev/null \
+                || sudo apt-get install -y python3-venv
+        fi
+    fi
+    "$PYTHON" -m venv "${VENV_DIR}"
 fi
+VENV_PYTHON="${VENV_DIR}/bin/python"
+VENV_PIP="${VENV_DIR}/bin/pip"
+ok "Venv: ${VENV_DIR}"
 
 # ── Tailscale ───────────────────────────────────────────────────────────────
 if ! command -v tailscale &>/dev/null; then
@@ -85,24 +99,21 @@ else
     ok "Tailscale: $(tailscale version 2>/dev/null | head -1 || echo 'installed')"
 fi
 
-# ── Install pods ─────────────────────────────────────────────────────────────
+# ── Install pods into venv ───────────────────────────────────────────────────
 info "Installing pods Python package..."
-"$PYTHON" -m pip install --quiet -e "${REPO_DIR}[dev]"
+"$VENV_PIP" install --quiet -e "${REPO_DIR}"
 ok "pods package installed"
 
 # ── PATH setup ───────────────────────────────────────────────────────────────
 mkdir -p "${INSTALL_BIN}"
 
-PODS_ENTRY=$(command -v pods 2>/dev/null || true)
-if [[ -z "$PODS_ENTRY" ]]; then
-    LAUNCHER="${INSTALL_BIN}/pods"
-    cat > "${LAUNCHER}" <<EOF
+LAUNCHER="${INSTALL_BIN}/pods"
+cat > "${LAUNCHER}" <<EOF
 #!/usr/bin/env bash
-exec ${PYTHON} -m pods "\$@"
+exec "${VENV_PYTHON}" -m pods "\$@"
 EOF
-    chmod +x "${LAUNCHER}"
-    ok "Created launcher at ${LAUNCHER}"
-fi
+chmod +x "${LAUNCHER}"
+ok "Launcher at ${LAUNCHER}"
 
 if [[ ":$PATH:" != *":${INSTALL_BIN}:"* ]]; then
     warn "Add this to your shell profile (~/.bashrc or ~/.zshrc):"
