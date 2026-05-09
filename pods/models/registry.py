@@ -1,4 +1,14 @@
 REGISTRY = {
+    "qwen0.5b": {
+        "repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        "filename": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "size_gb": 0.4,
+    },
+    "qwen1.5b": {
+        "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+        "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "size_gb": 1.0,
+    },
     "qwen32b": {
         "repo": "Qwen/Qwen2.5-32B-Instruct-GGUF",
         "filename": "qwen2.5-32b-instruct-q4_k_m.gguf",
