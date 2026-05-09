@@ -21,8 +21,8 @@ LOGS_DIR = Path.home() / ".pods" / "logs"
 
 @click.command()
 @click.argument("link")
-@click.option("--authkey", required=True, help="Tailscale pre-auth key from admin.tailscale.com")
-def cmd(link: str, authkey: str):
+@click.option("--authkey", default=None, help="Tailscale pre-auth key (skip if already on Tailscale)")
+def cmd(link: str, authkey: str | None):
     """Join an existing pod using an invite link."""
     try:
         invite = decode_invite(link)
@@ -30,10 +30,21 @@ def cmd(link: str, authkey: str):
         internal_token = invite["internal_token"]
 
         click.echo(f"Joining pod '{invite.get('pod_name', 'unknown')}'...")
-        click.echo("Connecting to Tailscale...")
-        bring_up(authkey)
 
-        tailscale_ip = get_ip()
+        # Check if already on Tailscale before trying to bring it up
+        try:
+            tailscale_ip = get_ip()
+            click.echo(f"Tailscale already connected: {tailscale_ip}")
+        except Exception:
+            if not authkey:
+                raise PodsError(
+                    "Not connected to Tailscale",
+                    reason="No Tailscale IP found and no --authkey provided",
+                    suggestion="Run 'tailscale up' manually, or pass --authkey <key>",
+                )
+            click.echo("Connecting to Tailscale...")
+            bring_up(authkey)
+            tailscale_ip = get_ip()
 
         click.echo("Running pre-flight checks...")
         results = PreflightChecker().run()
