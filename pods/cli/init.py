@@ -62,12 +62,16 @@ def cmd(name: str):
             "internal_token": internal_token,
         }
         CONFIG_PATH.write_text(json.dumps(config, indent=2))
+        try:
+            CONFIG_PATH.chmod(0o600)
+        except (OSError, NotImplementedError):
+            pass  # Windows / unsupported FS
 
-        log = open(LOGS_DIR / "gateway.log", "a")
-        subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "pods.gateway.app:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "warning"],
-            stdout=log, stderr=log,
-        )
+        with open(LOGS_DIR / "gateway.log", "a") as log:
+            subprocess.Popen(
+                [sys.executable, "-m", "uvicorn", "pods.gateway.app:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "warning"],
+                stdout=log, stderr=log,
+            )
 
         click.echo(f"\n✓ Pod '{name}' initialized.")
         click.echo(f"  Coordinator IP: {tailscale_ip}")

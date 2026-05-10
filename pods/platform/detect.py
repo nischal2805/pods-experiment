@@ -21,45 +21,43 @@ def _is_wsl2() -> bool:
         return False
 
 
+_GPU_PROBE_TIMEOUT_S = 5
+
+
+def _safe_run(args: list[str], timeout: int = _GPU_PROBE_TIMEOUT_S):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+
 def _detect_gpu_linux() -> tuple[str, str, int]:
     # NVIDIA
-    result = subprocess.run(
-        ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0 and result.stdout.strip():
+    result = _safe_run(["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+    if result is not None and result.returncode == 0 and result.stdout.strip():
         lines = [ln.strip() for ln in result.stdout.strip().splitlines() if ln.strip().isdigit()]
         vram_mb = sum(int(ln) for ln in lines)
         vram_gb = vram_mb // 1024
 
-        cuda_result = subprocess.run(["nvcc", "--version"], capture_output=True, text=True)
+        cuda_result = _safe_run(["nvcc", "--version"])
         cuda_version = ""
-        if cuda_result.returncode == 0:
+        if cuda_result is not None and cuda_result.returncode == 0:
             match = re.search(r"release (\d+\.\d+)", cuda_result.stdout)
             if match:
                 cuda_version = match.group(1)
         return "nvidia", cuda_version, vram_gb
 
     # AMD
-    result = subprocess.run(
-        ["rocm-smi", "--showmeminfo", "vram"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
+    result = _safe_run(["rocm-smi", "--showmeminfo", "vram"])
+    if result is not None and result.returncode == 0:
         return "amd", "", 0
 
     return "none", "", 0
 
 
 def _detect_gpu_mac() -> tuple[str, str, int]:
-    result = subprocess.run(
-        ["system_profiler", "SPDisplaysDataType"],
-        capture_output=True,
-        text=True,
-    )
-    if "Apple" in result.stdout:
+    result = _safe_run(["system_profiler", "SPDisplaysDataType"], timeout=10)
+    if result is not None and "Apple" in result.stdout:
         return "apple", "", 0
     return "none", "", 0
 

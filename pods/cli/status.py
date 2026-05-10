@@ -8,10 +8,14 @@ import httpx
 
 from ..errors import PodsError
 from ..internal_auth import internal_headers
+from ..network.probe import tcp_probe_many
 from ..state.store import StateStore
-from ..state.schema import PodState
+from ..state.schema import PodState, Member
 
 CONFIG_PATH = Path.home() / ".pods" / "config.json"
+
+STALE_AFTER_S = 90
+DEAD_AFTER_S = 600  # 10 minutes
 
 
 def _age(dt: datetime) -> str:
@@ -20,6 +24,31 @@ def _age(dt: datetime) -> str:
     if s < 60: return f"{s}s ago"
     if s < 3600: return f"{s//60}m ago"
     return f"{s//3600}h ago"
+
+
+def _label_for(member: Member, probes: dict[tuple[str, int], bool], now: datetime) -> str:
+    if member.role != "worker":
+        return "OK"
+    age = (now - member.last_seen).total_seconds()
+    agent_up = probes.get((member.tailscale_ip, 8082), False)
+    rpc_up = probes.get((member.tailscale_ip, 50052), False)
+    if age > DEAD_AFTER_S:
+        return "DEAD"
+    if age > STALE_AFTER_S:
+        return "STALE"
+    if agent_up and rpc_up:
+        return "OK"
+    return "DEGRADED"
+
+
+_LABEL_COLORS = {"OK": "green", "DEGRADED": "yellow", "STALE": "yellow", "DEAD": "red"}
+
+
+def _styled(label: str) -> str:
+    color = _LABEL_COLORS.get(label)
+    if color and sys.stdout.isatty():
+        return click.style(label, fg=color)
+    return label
 
 
 @click.command()
@@ -46,14 +75,27 @@ def cmd():
             state = store.load()
 
         assert state is not None
+
+        worker_targets: list[tuple[str, int]] = []
+        for m in state.members:
+            if m.role == "worker":
+                worker_targets.append((m.tailscale_ip, 8082))
+                worker_targets.append((m.tailscale_ip, 50052))
+        probes = tcp_probe_many(worker_targets, timeout=1.0) if worker_targets else {}
+
         click.echo(f"\nPod: {state.pod.name}  ({state.pod.id[:8]}...)")
         click.echo(f"Coordinator: {state.pod.coordinator_ip}")
         click.echo(f"Engine: {state.pod.inference_engine}")
 
+        now = datetime.now(timezone.utc)
         click.echo(f"\nMembers ({len(state.members)}):")
         for m in state.members:
+            label = _label_for(m, probes, now)
             age = _age(m.last_seen)
-            click.echo(f"  {m.name:20s}  {m.role:12s}  {m.tailscale_ip:15s}  {m.connection_type:6s}  {age}")
+            click.echo(
+                f"  {m.name:20s}  {m.role:12s}  {m.tailscale_ip:15s}  "
+                f"{m.connection_type:6s}  {age:12s}  {_styled(label)}"
+            )
 
         click.echo(f"\nModels ({len(state.models)}):")
         for m in state.models:

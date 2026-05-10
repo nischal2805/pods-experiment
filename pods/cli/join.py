@@ -113,12 +113,16 @@ def cmd(link: str, authkey: str | None):
             "internal_token": internal_token,
         }
         CONFIG_PATH.write_text(json.dumps(config, indent=2))
+        try:
+            CONFIG_PATH.chmod(0o600)
+        except (OSError, NotImplementedError):
+            pass  # Windows / unsupported FS
 
-        log = open(LOGS_DIR / "agent.log", "a")
-        subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "pods.agent.server:app", "--host", "0.0.0.0", "--port", "8082", "--log-level", "warning"],
-            stdout=log, stderr=log,
-        )
+        with open(LOGS_DIR / "agent.log", "a") as log:
+            subprocess.Popen(
+                [sys.executable, "-m", "uvicorn", "pods.agent.server:app", "--host", "0.0.0.0", "--port", "8082", "--log-level", "warning"],
+                stdout=log, stderr=log,
+            )
 
         click.echo(f"\n✓ Joined pod. Node IP: {tailscale_ip}")
         click.echo("  Run 'pods attach' to start inference backend.")

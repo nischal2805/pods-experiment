@@ -1,16 +1,24 @@
+import sys
+
 from ..errors import InferenceError
 from .base import EngineStatus, InferenceEngine
 from .exo import ExoEngine
 from .llamacpp import LlamaCppEngine
 from .ollama import OllamaEngine
 
+_EXO_SKIP_LOGGED = False
+
 
 def _engine_list() -> list[tuple[str, type]]:
-    return [
-        ("llama.cpp RPC", LlamaCppEngine),
-        ("exo", ExoEngine),
-        ("Ollama", OllamaEngine),
-    ]
+    global _EXO_SKIP_LOGGED
+    engines: list[tuple[str, type]] = [("llama.cpp RPC", LlamaCppEngine)]
+    if sys.platform == "darwin":
+        engines.append(("exo", ExoEngine))
+    elif not _EXO_SKIP_LOGGED:
+        print("[pods] exo skipped — Apple Silicon only since exo 0.3.x")
+        _EXO_SKIP_LOGGED = True
+    engines.append(("Ollama", OllamaEngine))
+    return engines
 
 
 class FallbackOrchestrator:

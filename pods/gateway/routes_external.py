@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from starlette.background import BackgroundTask
 
 from ..state.schema import Key, UsageRecord
@@ -9,6 +10,8 @@ from .router import select_backend
 from .proxy import stream_to_backend
 
 router = APIRouter()
+
+RELOAD_RETRY_AFTER_S = 5
 
 
 def get_store() -> StateStore:
@@ -26,6 +29,18 @@ async def chat_completions(
 
     try:
         state = store.load()
+    except Exception:
+        raise HTTPException(status_code=503, detail="State unavailable")
+
+    target = next((m for m in state.models if m.name == model and m.loaded), None)
+    if target is not None and target.reloading:
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": str(RELOAD_RETRY_AFTER_S)},
+            content={"error": "model reloading", "retry_after_s": RELOAD_RETRY_AFTER_S},
+        )
+
+    try:
         backend_name, backend_url = select_backend(model, state)
     except InferenceError as e:
         raise HTTPException(status_code=503, detail={"error": e.message, "reason": e.reason, "suggestion": e.suggestion})

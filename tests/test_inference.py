@@ -111,6 +111,37 @@ def test_llamacpp_get_models_empty_when_not_running():
     assert models == []
 
 
+def test_tail_log_returns_last_n_lines(tmp_path):
+    from pods.inference.llamacpp import _tail_log
+    p = tmp_path / "x.log"
+    p.write_text("\n".join(f"line{i}" for i in range(50)) + "\n")
+    out = _tail_log(p, n=5)
+    assert "line45" in out
+    assert "line49" in out
+    assert "line0" not in out
+
+
+def test_tail_log_missing_file(tmp_path):
+    from pods.inference.llamacpp import _tail_log
+    out = _tail_log(tmp_path / "nope.log", n=5)
+    assert "log unavailable" in out
+
+
+def test_health_timeout_includes_log_tail(tmp_path, monkeypatch):
+    from pods.inference import llamacpp as mod
+    log_path = tmp_path / "llama-server.log"
+    log_path.write_text("startup line\nERROR: cuda init failed\nbailing out\n")
+    monkeypatch.setattr(mod, "LLAMA_SERVER_LOG", log_path)
+    monkeypatch.setattr(mod, "HEALTH_TIMEOUT", 0)  # immediate timeout
+
+    engine = mod.LlamaCppEngine()
+    with patch("httpx.get", side_effect=Exception("refused")):
+        with pytest.raises(InferenceError) as ei:
+            engine._wait_for_health()
+    assert "ERROR: cuda init failed" in ei.value.reason
+    assert "bailing out" in ei.value.reason
+
+
 def test_exo_detect_false_when_not_installed():
     with patch("pods.inference.exo.shutil.which", return_value=None):
         assert ExoEngine().detect() is False
@@ -184,7 +215,8 @@ def test_fallback_skips_to_exo_when_llamacpp_fails():
     exo_mock.detect.return_value = True
     exo_mock.health.return_value = HealthStatus(EngineStatus.RUNNING)
 
-    with patch("pods.inference.fallback.LlamaCppEngine", return_value=llamacpp_mock), \
+    with patch("pods.inference.fallback.sys.platform", "darwin"), \
+         patch("pods.inference.fallback.LlamaCppEngine", return_value=llamacpp_mock), \
          patch("pods.inference.fallback.ExoEngine", return_value=exo_mock):
         name, _ = FallbackOrchestrator().start_best_engine({})
 
@@ -202,3 +234,19 @@ def test_fallback_skips_unavailable_engines():
         name, _ = FallbackOrchestrator().start_best_engine({})
 
     assert name == "Ollama"
+
+
+def test_fallback_excludes_exo_on_non_darwin():
+    with patch("pods.inference.fallback.sys.platform", "linux"):
+        from pods.inference.fallback import _engine_list
+        names = [n for n, _ in _engine_list()]
+    assert "exo" not in names
+    assert "llama.cpp RPC" in names
+    assert "Ollama" in names
+
+
+def test_fallback_includes_exo_on_darwin():
+    with patch("pods.inference.fallback.sys.platform", "darwin"):
+        from pods.inference.fallback import _engine_list
+        names = [n for n, _ in _engine_list()]
+    assert "exo" in names
