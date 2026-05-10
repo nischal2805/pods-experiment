@@ -1,15 +1,45 @@
+import json
 import os
 import threading
 import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import Depends, FastAPI
 
 from ..internal_auth import require_internal_access
 from ..inference.llamacpp import LlamaCppEngine
+from ..agent.heartbeat import HeartbeatThread, _send_heartbeat_once
 
-app = FastAPI()
 _engine: LlamaCppEngine | None = None
+_heartbeat: HeartbeatThread | None = None
+
+_CONFIG_PATH = Path.home() / ".pods" / "config.json"
+
+
+@asynccontextmanager
+async def _lifespan(_application: FastAPI):
+    global _heartbeat
+    try:
+        cfg = json.loads(_CONFIG_PATH.read_text())
+        coordinator_ip = cfg["coordinator_ip"]
+        node_id = cfg["node_id"]
+        coordinator_url = f"http://{coordinator_ip}:8080"
+        try:
+            _send_heartbeat_once(coordinator_url, node_id)
+        except Exception:
+            pass
+        _heartbeat = HeartbeatThread(coordinator_url, node_id, interval=30)
+        _heartbeat.start()
+    except Exception:
+        pass  # no config — agent started outside pods join
+    yield
+    if _heartbeat:
+        _heartbeat.stop()
+
+
+app = FastAPI(lifespan=_lifespan)
 
 
 @app.post("/internal/start-rpc")

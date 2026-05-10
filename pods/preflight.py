@@ -116,13 +116,43 @@ class PreflightChecker:
     def _check_port_50052(self) -> CheckResult:
         return self._port_check(50052, "Port 50052 (rpc-server)", block=False)
 
-    def _port_check(self, port: int, name: str, block: bool = True) -> CheckResult:
+    # Patterns matched against /proc cmdlines (Linux) or ps output (Mac/WSL)
+    _PODS_PATTERNS = [
+        "uvicorn pods.gateway",
+        "uvicorn pods.agent",
+        "llama-server",
+        "rpc-server",
+    ]
+
+    def _port_in_use(self, port: int) -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1)
-            if s.connect_ex(("127.0.0.1", port)) == 0:
-                severity = "block" if block else "warn"
-                return CheckResult(
-                    name, severity,
-                    f"Port {port} already in use — free it before running pods",
+            return s.connect_ex(("127.0.0.1", port)) == 0
+
+    def _try_free_port(self, port: int) -> bool:
+        """Kill known pods processes occupying *port*. Return True if port is now free."""
+        for pattern in self._PODS_PATTERNS:
+            try:
+                subprocess.run(
+                    ["pkill", "-f", pattern],
+                    capture_output=True, timeout=3,
                 )
-        return CheckResult(name, "pass", "Available")
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+        import time
+        time.sleep(0.5)
+        return not self._port_in_use(port)
+
+    def _port_check(self, port: int, name: str, block: bool = True) -> CheckResult:
+        if not self._port_in_use(port):
+            return CheckResult(name, "pass", "Available")
+
+        freed = self._try_free_port(port)
+        if freed:
+            return CheckResult(name, "pass", f"Freed stale pods process on {port}")
+
+        severity = "block" if block else "warn"
+        return CheckResult(
+            name, severity,
+            f"Port {port} in use by non-pods process — free it before running pods",
+        )
