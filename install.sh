@@ -103,26 +103,77 @@ if [[ ":$PATH:" != *":${INSTALL_BIN}:"* ]]; then
     echo ""
 fi
 
-# llama.cpp prebuilt binaries
-LLAMA_BIN_DIR="${HOME}/pods/llama.cpp/build/bin"
+# llama.cpp — build from source (reliable across release-naming changes)
+LLAMA_SRC_DIR="${HOME}/pods/llama.cpp"
+LLAMA_BIN_DIR="${LLAMA_SRC_DIR}/build/bin"
 LLAMA_SERVER="${LLAMA_BIN_DIR}/llama-server"
 RPC_SERVER="${LLAMA_BIN_DIR}/rpc-server"
+LLAMA_REPO="https://github.com/ggerganov/llama.cpp"
 
 if [[ -x "${LLAMA_SERVER}" && -x "${RPC_SERVER}" ]]; then
     ok "llama.cpp binaries already present at ${LLAMA_BIN_DIR}"
 else
-    info "Downloading prebuilt llama.cpp binaries (auto-detect CUDA/Metal/ROCm)..."
-    if "${VENV_PYTHON}" -c "
-from pods.platform.detect import detect_platform
-from pods.platform.setup import download_and_install_binaries
-download_and_install_binaries(detect_platform())
-"; then
-        ok "llama.cpp binaries installed"
+    info "Building llama.cpp from source (this takes 10-20 minutes)..."
+
+    # Verify build deps
+    MISSING=()
+    command -v cmake &>/dev/null || MISSING+=("cmake")
+    command -v g++ &>/dev/null || command -v clang++ &>/dev/null || MISSING+=("g++ or clang++")
+    command -v git &>/dev/null || MISSING+=("git")
+    if [[ ${#MISSING[@]} -gt 0 ]]; then
+        fail "Missing build tools: ${MISSING[*]}"
+        echo "    Install with: sudo apt install -y build-essential cmake git    (Debian/Ubuntu)"
+        echo "                  sudo dnf install -y gcc-c++ cmake git              (Fedora/RHEL)"
+        echo "                  brew install cmake                                  (macOS)"
+        exit 1
+    fi
+
+    # Clone or update
+    mkdir -p "${HOME}/pods"
+    if [[ -d "${LLAMA_SRC_DIR}/.git" ]]; then
+        info "Updating existing clone at ${LLAMA_SRC_DIR}..."
+        git -C "${LLAMA_SRC_DIR}" pull --ff-only || warn "git pull failed — continuing with current checkout"
     else
-        warn "Prebuilt download failed. Build manually:"
-        echo "    git clone https://github.com/ggerganov/llama.cpp ~/pods/llama.cpp"
-        echo "    cd ~/pods/llama.cpp && cmake -B build -DGGML_RPC=ON -DGGML_CUDA=ON"
-        echo "    cmake --build build --config Release -j"
+        info "Cloning llama.cpp into ${LLAMA_SRC_DIR}..."
+        git clone --depth 1 "${LLAMA_REPO}" "${LLAMA_SRC_DIR}"
+    fi
+
+    # Pick GPU backend flags
+    CMAKE_FLAGS=("-DGGML_RPC=ON" "-DCMAKE_BUILD_TYPE=Release")
+    if [[ "$OS" == "mac" ]]; then
+        ok "Building with Metal (default on macOS)"
+        # Metal is on by default on Apple Silicon — no flag needed
+    elif command -v nvidia-smi &>/dev/null; then
+        ok "Building with CUDA (nvidia-smi detected)"
+        CMAKE_FLAGS+=("-DGGML_CUDA=ON")
+    elif command -v rocm-smi &>/dev/null; then
+        ok "Building with ROCm/HIP (rocm-smi detected)"
+        CMAKE_FLAGS+=("-DGGML_HIP=ON")
+    else
+        warn "No GPU detected — building CPU-only"
+    fi
+
+    # Configure + build
+    info "Running cmake configure..."
+    if ! cmake -S "${LLAMA_SRC_DIR}" -B "${LLAMA_SRC_DIR}/build" "${CMAKE_FLAGS[@]}"; then
+        fail "cmake configure failed. See output above."
+        exit 1
+    fi
+
+    JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+    info "Compiling with ${JOBS} jobs (grab a coffee)..."
+    if ! cmake --build "${LLAMA_SRC_DIR}/build" --config Release -j "${JOBS}" --target llama-server rpc-server; then
+        fail "cmake build failed. See output above."
+        exit 1
+    fi
+
+    if [[ -x "${LLAMA_SERVER}" && -x "${RPC_SERVER}" ]]; then
+        ok "Built llama-server and rpc-server at ${LLAMA_BIN_DIR}"
+    else
+        fail "Build completed but binaries not found at expected paths."
+        echo "    Expected: ${LLAMA_SERVER}"
+        echo "    Expected: ${RPC_SERVER}"
+        exit 1
     fi
 fi
 
