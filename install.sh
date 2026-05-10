@@ -3,6 +3,8 @@ set -euo pipefail
 
 PODS_GITHUB="https://github.com/nischal2805/pods-experiment"
 INSTALL_BIN="${HOME}/.local/bin"
+VENV_DIR="${HOME}/.pods-venv"
+PYTHON_VERSION="3.11"
 
 # Support both: bash install.sh (from cloned repo) and curl | bash
 _PIPED=0
@@ -18,19 +20,21 @@ else
         echo "[pods] Updating existing clone at ${REPO_DIR}..."
         git -C "${REPO_DIR}" pull --ff-only
     fi
-    # Re-exec from fresh clone so cached curl response never runs stale code
     exec bash "${REPO_DIR}/install.sh"
 fi
+
 BOLD="\033[1m"
 GREEN="\033[32m"
 YELLOW="\033[33m"
+RED="\033[31m"
 RESET="\033[0m"
 
 info()  { echo -e "${BOLD}[pods]${RESET} $*"; }
-ok()    { echo -e "${GREEN}  ✓${RESET} $*"; }
-warn()  { echo -e "${YELLOW}  ⚠${RESET} $*"; }
+ok()    { echo -e "${GREEN}  [OK]${RESET}   $*"; }
+warn()  { echo -e "${YELLOW}  [WARN]${RESET} $*"; }
+fail()  { echo -e "${RED}  [FAIL]${RESET} $*"; }
 
-# ── Detect OS ──────────────────────────────────────────────────────────────
+# Detect OS
 OS="linux"
 if [[ "$(uname -s)" == "Darwin" ]]; then
     OS="mac"
@@ -39,58 +43,29 @@ elif grep -qi microsoft /proc/version 2>/dev/null; then
 fi
 info "Detected platform: ${OS}"
 
-# ── Python 3.11+ ────────────────────────────────────────────────────────────
-PYTHON=""
-for cmd in python3.12 python3.11 python3; do
-    if command -v "$cmd" &>/dev/null; then
-        VER=$("$cmd" -c "import sys; print(sys.version_info >= (3,11))" 2>/dev/null || echo "False")
-        if [[ "$VER" == "True" ]]; then
-            PYTHON="$cmd"
-            break
-        fi
-    fi
-done
-
-if [[ -z "$PYTHON" ]]; then
-    info "Installing Python 3.11..."
-    if [[ "$OS" == "mac" ]]; then
-        if ! command -v brew &>/dev/null; then
-            warn "Homebrew not found. Install from https://brew.sh then rerun this script."
-            exit 1
-        fi
-        brew install python@3.11
-        PYTHON="python3.11"
-    else
-        sudo apt-get update -qq
-        sudo apt-get install -y software-properties-common
-        sudo add-apt-repository -y ppa:deadsnakes/ppa
-        sudo apt-get install -y python3.11 python3.11-venv python3-pip
-        PYTHON="python3.11"
+# Install uv if missing
+if ! command -v uv &>/dev/null; then
+    info "Installing uv (fast Python package manager)..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
+    if ! command -v uv &>/dev/null; then
+        fail "uv install failed. See https://docs.astral.sh/uv/getting-started/installation/"
+        exit 1
     fi
 fi
-ok "Python: $($PYTHON --version)"
+ok "uv: $(uv --version)"
 
-# ── venv (avoids PEP 668 externally-managed-environment error) ───────────────
-VENV_DIR="${HOME}/.pods-venv"
+# uv handles Python download + venv creation in one step
 if [[ ! -d "${VENV_DIR}" ]]; then
-    info "Creating venv at ${VENV_DIR}..."
-    # python3-venv may not be installed
-    if ! "$PYTHON" -m venv --help &>/dev/null 2>&1; then
-        if [[ "$OS" == "mac" ]]; then
-            warn "python3-venv missing. Run: brew install python@3.11"
-            exit 1
-        else
-            sudo apt-get install -y "$(basename "$PYTHON")-venv" 2>/dev/null \
-                || sudo apt-get install -y python3-venv
-        fi
-    fi
-    "$PYTHON" -m venv "${VENV_DIR}"
+    info "Creating venv at ${VENV_DIR} with Python ${PYTHON_VERSION}..."
+    uv venv --python "${PYTHON_VERSION}" "${VENV_DIR}"
+else
+    ok "Venv exists: ${VENV_DIR}"
 fi
 VENV_PYTHON="${VENV_DIR}/bin/python"
-VENV_PIP="${VENV_DIR}/bin/pip"
-ok "Venv: ${VENV_DIR}"
+ok "Python: $("${VENV_PYTHON}" --version)"
 
-# ── Tailscale ───────────────────────────────────────────────────────────────
+# Tailscale
 if ! command -v tailscale &>/dev/null; then
     info "Installing Tailscale..."
     if [[ "$OS" == "mac" ]]; then
@@ -103,14 +78,13 @@ else
     ok "Tailscale: $(tailscale version 2>/dev/null | head -1 || echo 'installed')"
 fi
 
-# ── Install pods into venv ───────────────────────────────────────────────────
+# Install pods (uv pip is much faster than pip)
 info "Installing pods Python package..."
-"$VENV_PIP" install --quiet -e "${REPO_DIR}"
+uv pip install --python "${VENV_PYTHON}" --quiet --reinstall -e "${REPO_DIR}"
 ok "pods package installed"
 
-# ── PATH setup ───────────────────────────────────────────────────────────────
+# Launcher
 mkdir -p "${INSTALL_BIN}"
-
 LAUNCHER="${INSTALL_BIN}/pods"
 cat > "${LAUNCHER}" <<EOF
 #!/usr/bin/env bash
@@ -126,11 +100,34 @@ if [[ ":$PATH:" != *":${INSTALL_BIN}:"* ]]; then
     echo ""
 fi
 
-# ── Done ─────────────────────────────────────────────────────────────────────
+# llama.cpp prebuilt binaries
+LLAMA_BIN_DIR="${HOME}/pods/llama.cpp/build/bin"
+LLAMA_SERVER="${LLAMA_BIN_DIR}/llama-server"
+RPC_SERVER="${LLAMA_BIN_DIR}/rpc-server"
+
+if [[ -x "${LLAMA_SERVER}" && -x "${RPC_SERVER}" ]]; then
+    ok "llama.cpp binaries already present at ${LLAMA_BIN_DIR}"
+else
+    info "Downloading prebuilt llama.cpp binaries (auto-detect CUDA/Metal/ROCm)..."
+    if "${VENV_PYTHON}" -c "
+from pods.platform.detect import detect_platform
+from pods.platform.setup import download_and_install_binaries
+download_and_install_binaries(detect_platform())
+"; then
+        ok "llama.cpp binaries installed"
+    else
+        warn "Prebuilt download failed. Build manually:"
+        echo "    git clone https://github.com/ggerganov/llama.cpp ~/pods/llama.cpp"
+        echo "    cd ~/pods/llama.cpp && cmake -B build -DGGML_RPC=ON -DGGML_CUDA=ON"
+        echo "    cmake --build build --config Release -j"
+    fi
+fi
+
+# Done
 echo ""
-echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${BOLD}============================================${RESET}"
 echo -e "${GREEN}${BOLD}  Pods installed successfully!${RESET}"
-echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${BOLD}============================================${RESET}"
 echo ""
 echo "  Next steps:"
 echo ""
@@ -144,10 +141,12 @@ echo "    pods join <invite-link> --authkey <tailscale-auth-key>"
 echo "    pods attach"
 echo ""
 echo "  Load a model and start inferencing:"
-echo "    pods model add qwen7b        # download ~5GB"
-echo "    pods model load qwen7b       # auto-starts workers"
+echo "    pods model add qwen0.5b       # smallest, ~400MB"
+echo "    pods model load qwen0.5b      # auto-discovers workers"
 echo ""
-echo "  Then use the OpenAI-compatible API at http://localhost:8080"
+echo "  OpenAI-compatible API:  http://localhost:8080/v1/chat/completions"
+echo "  Live dashboard:         http://localhost:8080/dashboard"
 echo ""
-echo "  Get a Tailscale auth key at: https://login.tailscale.com/admin/settings/keys"
+echo "  Tailscale auth key:     https://login.tailscale.com/admin/settings/keys"
+echo "  Cleanup script:         bash ~/.pods-src/uninstall.sh"
 echo ""
