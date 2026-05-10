@@ -88,7 +88,10 @@ mkdir -p "${INSTALL_BIN}"
 LAUNCHER="${INSTALL_BIN}/pods"
 cat > "${LAUNCHER}" <<EOF
 #!/usr/bin/env bash
-exec "${VENV_PYTHON}" -m pods "\$@"
+# -P disables prepending CWD to sys.path, preventing collisions with
+# user directories named "pods" (e.g. ~/pods/ holding llama.cpp).
+# PYTHONSAFEPATH covers older 3.11 fallback if -P unsupported.
+exec env PYTHONSAFEPATH=1 "${VENV_PYTHON}" -P -m pods "\$@"
 EOF
 chmod +x "${LAUNCHER}"
 ok "Launcher at ${LAUNCHER}"
