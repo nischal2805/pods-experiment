@@ -67,3 +67,24 @@ def register(name: str, filename: str):
     except PodsError as e:
         click.echo(str(e), err=True)
         sys.exit(1)
+
+
+@cmd.command("unload")
+@click.argument("name")
+def unload(name: str):
+    """Unload a model — kill llama-server and stop rpc-server on workers."""
+    try:
+        mgr = ModelManager()
+        result = mgr.unload(name)
+        if result["killed_pid"]:
+            click.echo("  ✓ llama-server terminated")
+        else:
+            click.echo("  → llama-server pid not running (already gone)")
+        for host in result["workers_stopped"]:
+            click.echo(f"  ✓ stopped rpc-server on {host}")
+        for host in result["workers_failed"]:
+            click.echo(f"  ⚠ failed on {host}")
+        click.echo(f"✓ Model '{name}' unloaded.")
+    except PodsError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)

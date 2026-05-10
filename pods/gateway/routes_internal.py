@@ -2,7 +2,7 @@ import logging
 import os
 import signal
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -14,6 +14,8 @@ from ..state.schema import Member
 from ..state.store import StateStore
 
 _log = logging.getLogger("pods.gateway")
+
+DEAD_SWEEP_AFTER_S = 600  # 10 minutes
 
 
 router = APIRouter(dependencies=[Depends(require_internal_access)])
@@ -43,6 +45,10 @@ class AttachPayload(BaseModel):
     models: list[str] = Field(default_factory=list)
 
 
+class LeavePayload(BaseModel):
+    node_id: str
+
+
 @router.post("/internal/register")
 def register(payload: RegisterPayload, store: StateStore = Depends(get_store)):
     now = datetime.now(timezone.utc)
@@ -69,12 +75,31 @@ def register(payload: RegisterPayload, store: StateStore = Depends(get_store)):
 @router.post("/internal/heartbeat")
 def heartbeat(payload: HeartbeatPayload, store: StateStore = Depends(get_store)):
     def _mutate(state):
+        now = datetime.now(timezone.utc)
+        sweep_cutoff = now - timedelta(seconds=DEAD_SWEEP_AFTER_S)
+        sender_found = False
         for member in state.members:
             if member.node_id == payload.node_id:
-                member.last_seen = datetime.now(timezone.utc)
+                member.last_seen = now
                 member.connection_type = payload.connection_type
-                return True
-        return False
+                sender_found = True
+        if not sender_found:
+            return False
+        survivors = []
+        for m in state.members:
+            if m.node_id == payload.node_id or m.role == "coordinator":
+                survivors.append(m)
+                continue
+            if m.last_seen < sweep_cutoff:
+                age = int((now - m.last_seen).total_seconds())
+                _log.warning(
+                    "Auto-removing dead worker %s (%s) — last_seen %ds ago",
+                    m.name, m.tailscale_ip, age,
+                )
+                continue
+            survivors.append(m)
+        state.members = survivors
+        return True
 
     return {"status": "ok"} if store.update(_mutate) else {"status": "unknown_node"}
 
@@ -103,42 +128,73 @@ def attach(payload: AttachPayload, store: StateStore = Depends(get_store)):
     return {"status": status}
 
 
-def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
-    if old_pid:
-        try:
-            os.kill(old_pid, signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            pass
-
-    state = store.load()
-    model = next((m for m in state.models if m.name == model_name), None)
-    if model is None:
-        return
-
-    rpc_hosts = _start_rpc_on_workers(state)
-    engine = LlamaCppEngine()
-    config = {
-        "mode": "coordinator",
-        "model_path": str(MODELS_DIR / model.file),
-        "rpc_hosts": rpc_hosts,
-    }
-    try:
-        engine.start(config)
-    except Exception as exc:
-        _log.error("LlamaCpp restart failed for model '%s': %s", model_name, exc)
-        return
-
-    loaded_pid = engine._process.pid if engine._process else 0
-
+def _set_reloading(store: StateStore, model_name: str, value: bool) -> None:
     def _mutate(fresh):
         for m in fresh.models:
             if m.name == model_name:
-                m.loaded = True
-                m.worker_nodes = rpc_hosts
-                m.loaded_pid = loaded_pid
+                m.reloading = value
                 break
-
     store.update(_mutate)
+
+
+def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
+    _set_reloading(store, model_name, True)
+    try:
+        if old_pid:
+            try:
+                os.kill(old_pid, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+
+        state = store.load()
+        model = next((m for m in state.models if m.name == model_name), None)
+        if model is None:
+            return
+
+        rpc_hosts = _start_rpc_on_workers(state)
+        engine = LlamaCppEngine()
+        config = {
+            "mode": "coordinator",
+            "model_path": str(MODELS_DIR / model.file),
+            "rpc_hosts": rpc_hosts,
+        }
+        try:
+            engine.start(config)
+        except Exception as exc:
+            _log.error("LlamaCpp restart failed for model '%s': %s", model_name, exc)
+            return
+
+        loaded_pid = engine._process.pid if engine._process else 0
+
+        def _mutate(fresh):
+            for m in fresh.models:
+                if m.name == model_name:
+                    m.loaded = True
+                    m.worker_nodes = rpc_hosts
+                    m.loaded_pid = loaded_pid
+                    break
+
+        store.update(_mutate)
+    finally:
+        _set_reloading(store, model_name, False)
+
+
+@router.post("/internal/leave")
+def leave(payload: LeavePayload, store: StateStore = Depends(get_store)):
+    def _mutate(state):
+        target = next((m for m in state.members if m.node_id == payload.node_id), None)
+        if target is None:
+            return False
+        if target.role == "coordinator":
+            return False
+        target_ip = target.tailscale_ip
+        state.members = [m for m in state.members if m.node_id != payload.node_id]
+        for model in state.models:
+            model.worker_nodes = [w for w in model.worker_nodes if not w.startswith(f"{target_ip}:")]
+        return True
+
+    removed = store.update(_mutate)
+    return {"status": "ok" if removed else "unknown_node"}
 
 
 @router.get("/internal/state")

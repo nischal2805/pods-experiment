@@ -1,3 +1,7 @@
+import os
+import threading
+import time
+
 import uvicorn
 from fastapi import Depends, FastAPI
 
@@ -26,6 +30,34 @@ def reconfigure(_: None = Depends(require_internal_access)) -> dict:
     engine.start({"mode": "worker"})
     _engine = engine
     return {"status": "reconfigured"}
+
+
+@app.post("/internal/stop-rpc")
+def stop_rpc(_: None = Depends(require_internal_access)) -> dict:
+    global _engine
+    if _engine:
+        _engine.stop()
+        _engine = None
+        return {"status": "stopped"}
+    return {"status": "not_running"}
+
+
+@app.post("/internal/shutdown")
+def shutdown(_: None = Depends(require_internal_access)) -> dict:
+    global _engine
+    if _engine:
+        try:
+            _engine.stop()
+        except Exception:
+            pass
+        _engine = None
+
+    def _exit_after_response() -> None:
+        time.sleep(0.5)
+        os._exit(0)
+
+    threading.Thread(target=_exit_after_response, daemon=True).start()
+    return {"status": "shutting_down"}
 
 
 @app.get("/internal/health")
