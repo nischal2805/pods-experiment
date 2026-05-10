@@ -27,11 +27,18 @@ def add(name: str):
 @cmd.command("load")
 @click.argument("name")
 @click.option("--rpc", "rpc_hosts", multiple=True, help="Explicit RPC worker addresses (skips auto-discovery)")
-def load(name: str, rpc_hosts: tuple):
+@click.option("--no-rpc", is_flag=True, help="Coordinator-only load (skip worker discovery and RPC)")
+def load(name: str, rpc_hosts: tuple, no_rpc: bool):
     """Load a model into memory and start inference."""
     try:
         mgr = ModelManager()
-        mgr.load(name, list(rpc_hosts) if rpc_hosts else None)
+        if no_rpc:
+            hosts: list | None = []
+        elif rpc_hosts:
+            hosts = list(rpc_hosts)
+        else:
+            hosts = None
+        mgr.load(name, hosts)
         click.echo(f"✓ Model '{name}' loaded.")
     except PodsError as e:
         click.echo(str(e), err=True)
