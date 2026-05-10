@@ -50,17 +50,42 @@ def _asset_keywords(platform_info: PlatformInfo) -> list[str]:
 
 
 def _find_asset(assets: list[dict], keywords: list[str]) -> str:
-    """Find asset URL where all keywords appear in the asset name (case-insensitive)."""
-    for asset in assets:
-        name = asset["name"].lower()
-        if all(k.lower() in name for k in keywords) and name.endswith(".zip"):
+    """Find asset URL where all keywords appear in the asset name (case-insensitive).
+
+    Tries progressively looser matches to handle llama.cpp naming variations
+    (ubuntu vs linux, x64 vs x86_64, cu12 vs cuda, etc.).
+    """
+    zips = [a for a in assets if a["name"].lower().endswith(".zip")]
+
+    # Each group: alternatives that satisfy the same requirement
+    def _alternatives(k: str) -> tuple[str, ...]:
+        if k in ("linux", "wsl2"):
+            return ("linux", "ubuntu")
+        if k == "x86_64":
+            return ("x86_64", "x64")
+        return (k,)
+
+    def _matches(name: str, groups: list[tuple[str, ...]]) -> bool:
+        return all(any(alt in name for alt in grp) for grp in groups)
+
+    # Attempt 1: all keywords (with platform synonyms)
+    groups = [_alternatives(k) for k in keywords]
+    for asset in zips:
+        if _matches(asset["name"].lower(), groups):
             return asset["browser_download_url"]
-    # Fallback: try without CUDA minor-version keyword (e.g. drop "cu12" if not matching)
-    fallback = [k for k in keywords if not k.startswith("cu")]
-    for asset in assets:
-        name = asset["name"].lower()
-        if all(k.lower() in name for k in fallback) and name.endswith(".zip"):
+
+    # Attempt 2: drop cu<N> version specificity (keep "cuda")
+    groups2 = [_alternatives(k) for k in keywords if not k.startswith("cu")]
+    for asset in zips:
+        if _matches(asset["name"].lower(), groups2):
             return asset["browser_download_url"]
+
+    # Attempt 3: drop cuda requirement entirely (CPU build acceptable as last resort)
+    groups3 = [_alternatives(k) for k in keywords if k not in ("cuda", "rocm") and not k.startswith("cu")]
+    for asset in zips:
+        if _matches(asset["name"].lower(), groups3):
+            return asset["browser_download_url"]
+
     raise PlatformError(
         "No matching llama.cpp binary found for this platform",
         reason=f"Keywords: {keywords}",

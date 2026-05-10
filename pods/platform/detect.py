@@ -39,12 +39,19 @@ def _detect_gpu_linux() -> tuple[str, str, int]:
         vram_mb = sum(int(ln) for ln in lines)
         vram_gb = vram_mb // 1024
 
-        cuda_result = _safe_run(["nvcc", "--version"])
         cuda_version = ""
-        if cuda_result is not None and cuda_result.returncode == 0:
-            match = re.search(r"release (\d+\.\d+)", cuda_result.stdout)
-            if match:
-                cuda_version = match.group(1)
+        # Prefer nvcc (toolkit version); fall back to nvidia-smi header (driver max CUDA)
+        nvcc = _safe_run(["nvcc", "--version"])
+        if nvcc is not None and nvcc.returncode == 0:
+            m = re.search(r"release (\d+\.\d+)", nvcc.stdout)
+            if m:
+                cuda_version = m.group(1)
+        if not cuda_version:
+            smi = _safe_run(["nvidia-smi"])
+            if smi is not None and smi.returncode == 0:
+                m = re.search(r"CUDA Version:\s*(\d+\.\d+)", smi.stdout)
+                if m:
+                    cuda_version = m.group(1)
         return "nvidia", cuda_version, vram_gb
 
     # AMD
