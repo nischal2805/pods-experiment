@@ -49,11 +49,20 @@ def ping(peer_ip: str) -> dict:
         text=True,
         timeout=15,
     )
-    direct = "direct connection" in result.stdout.lower()
+    out = result.stdout
+    direct = "direct connection" in out.lower()
+    derp_region = None
+    if not direct:
+        # parse "via DERP(<region>)" from output
+        import re
+        m = re.search(r"via DERP\(([^)]+)\)", out)
+        if m:
+            derp_region = m.group(1)
     return {
         "ip": peer_ip,
         "direct": direct,
-        "output": result.stdout.strip(),
+        "derp_region": derp_region,
+        "output": out.strip(),
     }
 
 
