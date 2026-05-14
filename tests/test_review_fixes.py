@@ -118,3 +118,37 @@ def test_save_writes_backup(tmp_path):
     backup = tmp_path / "state.json.bak"
     assert backup.exists()
     assert json.loads(backup.read_text())["pod"]["name"] == "first"
+
+
+def test_model_load_uses_extended_timeout_for_rpc(tmp_path):
+    from pods.models import manager as manager_mod
+
+    store = StateStore(path=tmp_path / "state.json")
+    model = Model(name="qwen0.5b", file="qwen.gguf", size_gb=0.4)
+    store.save(PodState(pod=Pod(name="t", coordinator_ip="100.0.0.1"), models=[model]))
+    mgr = ModelManager(store=store)
+
+    with patch("pods.models.manager.LlamaCppEngine") as mock_engine:
+        instance = mock_engine.return_value
+        instance.detect.return_value = True
+        instance._process = None
+        mgr.load("qwen0.5b", rpc_hosts=["100.77.26.65:50052"])
+        config = instance.start.call_args.args[0]
+        assert config["health_timeout_s"] == manager_mod.DISTRIBUTED_LOAD_HEALTH_TIMEOUT_S
+
+
+def test_model_load_uses_default_timeout_without_rpc(tmp_path):
+    from pods.models import manager as manager_mod
+
+    store = StateStore(path=tmp_path / "state.json")
+    model = Model(name="qwen0.5b", file="qwen.gguf", size_gb=0.4)
+    store.save(PodState(pod=Pod(name="t", coordinator_ip="100.0.0.1"), models=[model]))
+    mgr = ModelManager(store=store)
+
+    with patch("pods.models.manager.LlamaCppEngine") as mock_engine:
+        instance = mock_engine.return_value
+        instance.detect.return_value = True
+        instance._process = None
+        mgr.load("qwen0.5b", rpc_hosts=[])
+        config = instance.start.call_args.args[0]
+        assert config["health_timeout_s"] == manager_mod.LOCAL_LOAD_HEALTH_TIMEOUT_S

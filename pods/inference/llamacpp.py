@@ -55,6 +55,9 @@ class LlamaCppEngine(InferenceEngine):
     def _start_llama_server(self, config: dict) -> None:
         model_path = config["model_path"]
         rpc_hosts: list[str] = config.get("rpc_hosts", [])
+        health_timeout_s = int(config.get("health_timeout_s", HEALTH_TIMEOUT))
+        if health_timeout_s <= 0:
+            health_timeout_s = HEALTH_TIMEOUT
         cmd = [
             str(LLAMA_SERVER),
             "--model", model_path,
@@ -67,7 +70,7 @@ class LlamaCppEngine(InferenceEngine):
         with open(LOGS_DIR / "llama-server.log", "a") as log:
             self._process = subprocess.Popen(cmd, stdout=log, stderr=log)
         try:
-            self._wait_for_health()
+            self._wait_for_health(timeout_s=health_timeout_s, using_rpc=bool(rpc_hosts))
         except Exception:
             if self._process and self._process.poll() is None:
                 self._process.kill()
@@ -78,8 +81,8 @@ class LlamaCppEngine(InferenceEngine):
             self._process = None
             raise
 
-    def _wait_for_health(self) -> None:
-        deadline = time.time() + HEALTH_TIMEOUT
+    def _wait_for_health(self, timeout_s: int = HEALTH_TIMEOUT, using_rpc: bool = False) -> None:
+        deadline = time.time() + timeout_s
         while time.time() < deadline:
             try:
                 r = httpx.get(HEALTH_URL, timeout=2)
@@ -89,14 +92,20 @@ class LlamaCppEngine(InferenceEngine):
                 pass
             time.sleep(2)
         tail = _tail_log(LLAMA_SERVER_LOG)
+        suggestion = "Check ~/.pods/logs/llama-server.log for errors"
+        if using_rpc:
+            suggestion += (
+                ". If workers are connected via relay, run 'pods ping' a few times to establish "
+                "direct paths, or retry coordinator-only with 'pods model load <name> --no-rpc'"
+            )
         reason = (
-            f"Health check timed out after {HEALTH_TIMEOUT}s\n\n"
+            f"Health check timed out after {timeout_s}s\n\n"
             f"Last {LOG_TAIL_LINES} lines of {LLAMA_SERVER_LOG}:\n{tail}"
         )
         raise InferenceError(
             "llama-server failed to become healthy",
             reason=reason,
-            suggestion="Check ~/.pods/logs/llama-server.log for errors",
+            suggestion=suggestion,
         )
 
     def stop(self) -> None:
