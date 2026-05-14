@@ -205,30 +205,31 @@ def leave(payload: LeavePayload, store: StateStore = Depends(get_store)):
     def _mutate(state):
         target = next((m for m in state.members if m.node_id == payload.node_id), None)
         if target is None:
-            return False, None, 0
+            return False, []
         if target.role == "coordinator":
-            return False, None, 0
+            return False, []
         target_ip = target.tailscale_ip
         state.members = [m for m in state.members if m.node_id != payload.node_id]
-        model_to_restart = None
-        old_pid = 0
+        # Collect ALL loaded models that used this worker for RPC, not just the first.
+        # A departing worker may be in the RPC pool of multiple loaded models.
+        affected: list[tuple[str, int]] = []
         for model in state.models:
             was_rpc_member = any(w.startswith(f"{target_ip}:") for w in model.worker_nodes)
             model.worker_nodes = [w for w in model.worker_nodes if not w.startswith(f"{target_ip}:")]
             # If this worker was providing RPC for a loaded model, restart llama-server without it.
             # Without this, llama-server continues trying to reach a dead RPC socket indefinitely.
-            if was_rpc_member and model.loaded and model_to_restart is None:
-                model_to_restart = model.name
-                old_pid = model.loaded_pid
-        return True, model_to_restart, old_pid
+            if was_rpc_member and model.loaded:
+                affected.append((model.name, model.loaded_pid))
+        return True, affected
 
-    removed, model_name, old_pid = store.update(_mutate)
-    if removed and model_name:
-        threading.Thread(
-            target=_restart_llamacpp,
-            args=(model_name, old_pid, store),
-            daemon=True,
-        ).start()
+    removed, affected = store.update(_mutate)
+    if removed:
+        for model_name, old_pid in affected:
+            threading.Thread(
+                target=_restart_llamacpp,
+                args=(model_name, old_pid, store),
+                daemon=True,
+            ).start()
     return {"status": "ok" if removed else "unknown_node"}
 
 

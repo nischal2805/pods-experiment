@@ -65,10 +65,14 @@ def start_rpc(_: None = Depends(require_internal_access)) -> dict:
 def reconfigure(_: None = Depends(require_internal_access)) -> dict:
     global _engine
     with _engine_lock:
-        if _engine:
-            _engine.stop()
+        if _engine is not None:
+            try:
+                _engine.stop()
+            except Exception:
+                pass
+            _engine = None
         engine = LlamaCppEngine()
-        engine.start({"mode": "worker"})
+        engine.start({"mode": "worker"})  # raises on failure; _engine stays None
         _engine = engine
     return {"status": "reconfigured"}
 

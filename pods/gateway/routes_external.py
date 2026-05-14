@@ -28,6 +28,10 @@ def _is_rate_limited(key_id: str) -> bool:
     with _rate_lock:
         timestamps = _rate_counters.get(key_id, [])
         timestamps = [t for t in timestamps if now - t < RATE_WINDOW_S]
+        if not timestamps:
+            # All prior timestamps expired — evict the entry to prevent unbounded dict growth
+            # when keys go idle after a burst.
+            _rate_counters.pop(key_id, None)
         if len(timestamps) >= RATE_LIMIT_RPM:
             _rate_counters[key_id] = timestamps
             return True
