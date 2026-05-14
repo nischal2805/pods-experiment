@@ -84,6 +84,10 @@ def _find_asset(assets: list[dict], keywords: list[str]) -> str:
     groups3 = [_alternatives(k) for k in keywords if k not in ("cuda", "rocm") and not k.startswith("cu")]
     for asset in zips:
         if _matches(asset["name"].lower(), groups3):
+            print(
+                "[pods] WARN: No GPU build found for this platform — falling back to CPU-only.\n"
+                "       Inference will be significantly slower without GPU acceleration."
+            )
             return asset["browser_download_url"]
 
     raise PlatformError(

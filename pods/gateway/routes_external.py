@@ -1,3 +1,6 @@
+import threading
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.background import BackgroundTask
@@ -13,6 +16,25 @@ router = APIRouter()
 
 RELOAD_RETRY_AFTER_S = 5
 
+# Simple in-memory sliding-window rate limiter: 60 requests per minute per API key.
+RATE_LIMIT_RPM = 60
+RATE_WINDOW_S = 60.0
+_rate_counters: dict[str, list[float]] = {}
+_rate_lock = threading.Lock()
+
+
+def _is_rate_limited(key_id: str) -> bool:
+    now = time.time()
+    with _rate_lock:
+        timestamps = _rate_counters.get(key_id, [])
+        timestamps = [t for t in timestamps if now - t < RATE_WINDOW_S]
+        if len(timestamps) >= RATE_LIMIT_RPM:
+            _rate_counters[key_id] = timestamps
+            return True
+        timestamps.append(now)
+        _rate_counters[key_id] = timestamps
+        return False
+
 
 def get_store() -> StateStore:
     return StateStore()
@@ -24,6 +46,13 @@ async def chat_completions(
     key: Key = Depends(validate_api_key),
     store: StateStore = Depends(get_store),
 ):
+    if _is_rate_limited(key.key_id):
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(int(RATE_WINDOW_S))},
+            content={"error": "rate_limit_exceeded", "retry_after_s": int(RATE_WINDOW_S)},
+        )
+
     body = await request.json()
     model = body.get("model", "")
 

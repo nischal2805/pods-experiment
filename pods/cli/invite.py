@@ -29,8 +29,13 @@ def cmd():
             )
 
         link = encode_invite(tailscale_ip, state.pod.name, internal_token)
-        click.echo(f"Invite link (share this with the joining machine):")
+        click.echo("Invite link (share this with the joining machine):")
         click.echo(f"\n  pods join {link} --authkey <tailscale-key>\n")
+        click.echo(
+            "⚠ This link contains a sensitive auth token and expires in 24 hours.\n"
+            "  Share it only over secure channels — do not paste it in public forums or logs.",
+            err=True,
+        )
 
     except PodsError as e:
         click.echo(str(e), err=True)

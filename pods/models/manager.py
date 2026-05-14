@@ -1,5 +1,6 @@
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -64,47 +65,57 @@ def _wait_rpc_reachable(host: str, port: int = RPC_PORT) -> bool:
     return False
 
 
+def _start_rpc_on_one_worker(w) -> str | None:
+    """Contact a single worker to start its rpc-server. Returns 'ip:port' on success, None on failure."""
+    try:
+        r = httpx.post(
+            f"http://{w.tailscale_ip}:8082/internal/start-rpc",
+            headers=internal_headers(),
+            timeout=10,
+        )
+        if r.status_code != 200:
+            print(
+                f"  [pods] Worker {w.name} ({w.tailscale_ip}) returned HTTP {r.status_code} "
+                f"from /internal/start-rpc — skipping. Check worker agent logs."
+            )
+            return None
+    except httpx.ConnectError:
+        print(
+            f"  [pods] Worker {w.name} ({w.tailscale_ip}:8082) connection refused — "
+            f"agent not running? Run 'pods join' on that machine."
+        )
+        return None
+    except httpx.TimeoutException:
+        print(
+            f"  [pods] Worker {w.name} ({w.tailscale_ip}:8082) timed out — "
+            f"Tailscale path unstable. Run 'pods ping' to check connectivity."
+        )
+        return None
+    except Exception as e:
+        print(f"  [pods] Worker {w.name} ({w.tailscale_ip}): unexpected error: {e}")
+        return None
+    print(f"  [pods] Started rpc-server on {w.name} ({w.tailscale_ip}) — probing :{RPC_PORT}")
+    if not _wait_rpc_reachable(w.tailscale_ip):
+        print(
+            f"  [pods] Worker {w.name} rpc-server unreachable on "
+            f"{w.tailscale_ip}:{RPC_PORT} after {RPC_PROBE_DEADLINE_S:.0f}s — skipping"
+        )
+        return None
+    return f"{w.tailscale_ip}:{RPC_PORT}"
+
+
 def _start_rpc_on_workers(state: PodState) -> list[str]:
     workers = _online_workers(state)
     if not workers:
         return []
-    rpc_hosts = []
-    for w in workers:
-        try:
-            r = httpx.post(
-                f"http://{w.tailscale_ip}:8082/internal/start-rpc",
-                headers=internal_headers(),
-                timeout=10,
-            )
-            if r.status_code != 200:
-                print(
-                    f"  [pods] Worker {w.name} ({w.tailscale_ip}) returned HTTP {r.status_code} "
-                    f"from /internal/start-rpc — skipping. Check worker agent logs."
-                )
-                continue
-        except httpx.ConnectError:
-            print(
-                f"  [pods] Worker {w.name} ({w.tailscale_ip}:8082) connection refused — "
-                f"agent not running? Run 'pods join' on that machine."
-            )
-            continue
-        except httpx.TimeoutException:
-            print(
-                f"  [pods] Worker {w.name} ({w.tailscale_ip}:8082) timed out — "
-                f"Tailscale path unstable. Run 'pods ping' to check connectivity."
-            )
-            continue
-        except Exception as e:
-            print(f"  [pods] Worker {w.name} ({w.tailscale_ip}): unexpected error: {e}")
-            continue
-        print(f"  [pods] Started rpc-server on {w.name} ({w.tailscale_ip}) — probing :{RPC_PORT}")
-        if not _wait_rpc_reachable(w.tailscale_ip):
-            print(
-                f"  [pods] Worker {w.name} rpc-server unreachable on "
-                f"{w.tailscale_ip}:{RPC_PORT} after {RPC_PROBE_DEADLINE_S:.0f}s — skipping"
-            )
-            continue
-        rpc_hosts.append(f"{w.tailscale_ip}:{RPC_PORT}")
+    # Contact all workers in parallel — sequential was O(n * 30s) for large clusters.
+    rpc_hosts: list[str] = []
+    with ThreadPoolExecutor(max_workers=len(workers)) as ex:
+        futures = {ex.submit(_start_rpc_on_one_worker, w): w for w in workers}
+        for f in as_completed(futures):
+            result = f.result()
+            if result:
+                rpc_hosts.append(result)
     return rpc_hosts
 
 
@@ -161,6 +172,20 @@ class ModelManager:
                 f"Model '{name}' is not registered",
                 reason="Model not found in state.json",
                 suggestion=f"Run 'pods model add {name}' to download and register it",
+            )
+        # Re-validate at load time — file may have been replaced with a symlink after registration.
+        raw_path = MODELS_DIR / model.file
+        if raw_path.is_symlink():
+            raise InferenceError(
+                f"Refusing to load symlink: {model.file}",
+                reason=f"{raw_path} is a symlink (may have been swapped after registration)",
+                suggestion="Replace the symlink with the actual GGUF file",
+            )
+        if not raw_path.exists():
+            raise InferenceError(
+                f"Model file missing: {model.file}",
+                reason=f"{raw_path} does not exist",
+                suggestion=f"Run 'pods model add {name}' to re-download",
             )
         engine = LlamaCppEngine()
         if not engine.detect():

@@ -124,6 +124,29 @@ def cmd(link: str, authkey: str | None):
                 stdout=log, stderr=log,
             )
 
+        # Verify the agent actually came up — Popen always succeeds even if uvicorn crashes.
+        agent_ok = False
+        for _ in range(10):
+            import time as _time
+            _time.sleep(0.5)
+            try:
+                r = httpx.get(
+                    "http://127.0.0.1:8082/internal/health",
+                    headers={HEADER_NAME: internal_token},
+                    timeout=1,
+                )
+                if r.status_code == 200:
+                    agent_ok = True
+                    break
+            except Exception:
+                pass
+        if not agent_ok:
+            click.echo(
+                "  ⚠ Agent did not respond after 5s — it may have failed to start.\n"
+                "    Check ~/.pods/logs/agent.log for errors.",
+                err=True,
+            )
+
         click.echo(f"\n✓ Joined pod. Node IP: {tailscale_ip}")
         click.echo("  Run 'pods attach' to start inference backend.")
 

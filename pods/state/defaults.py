@@ -46,7 +46,10 @@ def verify_key(raw_key: str, key_hash: str) -> bool:
 
 
 def key_id_from_token(raw_key: str) -> str:
-    return raw_key[:12]
+    # Use a hash of the key so the key_id shown in logs/status leaks no key bytes.
+    # Existing keys already have their key_id stored in state.json, so changing this
+    # only affects newly created keys.
+    return "kid_" + hashlib.sha256(raw_key.encode()).hexdigest()[:8]
 
 
 def new_raw_key(label: str) -> tuple[str, Key]:

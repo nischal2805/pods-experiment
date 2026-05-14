@@ -25,9 +25,15 @@ def select_backend(model: str, state) -> tuple[str, str]:
 
     for backend_name, url in BACKENDS.items():
         if backend_name == "ollama":
-            if _is_reachable(url):
-                return (backend_name, url)
-            tried[backend_name] = "connection refused — Ollama not running"
+            # Only use Ollama as a true last-resort when no other engine has the model loaded.
+            # If llama.cpp or exo loaded the model and their server crashed, routing to Ollama
+            # produces a confusing "model not found" error there instead of a clear "backend down".
+            if loaded_model is None:
+                if _is_reachable(url):
+                    return (backend_name, url)
+                tried[backend_name] = "connection refused — Ollama not running"
+            else:
+                tried[backend_name] = f"skipped — model already loaded via primary engine"
         elif loaded_model is not None:
             if _is_reachable(url):
                 return (backend_name, url)

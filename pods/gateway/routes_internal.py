@@ -17,6 +17,9 @@ _log = logging.getLogger("pods.gateway")
 
 DEAD_SWEEP_AFTER_S = 600  # 10 minutes
 
+# Prevents two concurrent worker-join events from both trying to restart llama-server at once,
+# which would race to kill and re-spawn the same process.
+_restart_lock = threading.Lock()
 
 router = APIRouter(dependencies=[Depends(require_internal_access)])
 
@@ -64,9 +67,17 @@ def register(payload: RegisterPayload, store: StateStore = Depends(get_store)):
     )
 
     def _mutate(state):
-        existing_ids = {m.node_id for m in state.members}
-        if payload.node_id not in existing_ids:
-            state.members.append(member)
+        for m in state.members:
+            if m.node_id == payload.node_id:
+                # Update mutable fields so a re-joining node with a new Tailscale IP is
+                # reflected correctly — previously the stale IP was kept, causing dead RPC.
+                m.tailscale_ip = payload.tailscale_ip
+                m.name = payload.name
+                m.os = payload.os
+                m.gpu_vram_gb = payload.gpu_vram_gb
+                m.last_seen = now
+                return
+        state.members.append(member)
 
     store.update(_mutate)
     return {"status": "registered", "node_id": payload.node_id}
@@ -138,6 +149,11 @@ def _set_reloading(store: StateStore, model_name: str, value: bool) -> None:
 
 
 def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
+    # Only one restart at a time — two workers joining within seconds would otherwise race
+    # to kill and re-spawn llama-server, leaving the model permanently in reloading=True.
+    if not _restart_lock.acquire(blocking=False):
+        _log.warning("Restart for '%s' skipped — another restart already in progress", model_name)
+        return
     _set_reloading(store, model_name, True)
     try:
         if old_pid:
@@ -180,6 +196,7 @@ def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
 
         store.update(_mutate)
     finally:
+        _restart_lock.release()
         _set_reloading(store, model_name, False)
 
 
@@ -188,16 +205,30 @@ def leave(payload: LeavePayload, store: StateStore = Depends(get_store)):
     def _mutate(state):
         target = next((m for m in state.members if m.node_id == payload.node_id), None)
         if target is None:
-            return False
+            return False, None, 0
         if target.role == "coordinator":
-            return False
+            return False, None, 0
         target_ip = target.tailscale_ip
         state.members = [m for m in state.members if m.node_id != payload.node_id]
+        model_to_restart = None
+        old_pid = 0
         for model in state.models:
+            was_rpc_member = any(w.startswith(f"{target_ip}:") for w in model.worker_nodes)
             model.worker_nodes = [w for w in model.worker_nodes if not w.startswith(f"{target_ip}:")]
-        return True
+            # If this worker was providing RPC for a loaded model, restart llama-server without it.
+            # Without this, llama-server continues trying to reach a dead RPC socket indefinitely.
+            if was_rpc_member and model.loaded and model_to_restart is None:
+                model_to_restart = model.name
+                old_pid = model.loaded_pid
+        return True, model_to_restart, old_pid
 
-    removed = store.update(_mutate)
+    removed, model_name, old_pid = store.update(_mutate)
+    if removed and model_name:
+        threading.Thread(
+            target=_restart_llamacpp,
+            args=(model_name, old_pid, store),
+            daemon=True,
+        ).start()
     return {"status": "ok" if removed else "unknown_node"}
 
 
