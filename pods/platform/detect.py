@@ -57,7 +57,11 @@ def _detect_gpu_linux() -> tuple[str, str, int]:
     # AMD
     result = _safe_run(["rocm-smi", "--showmeminfo", "vram"])
     if result is not None and result.returncode == 0:
-        return "amd", "", 0
+        # rocm-smi prints e.g. "GPU[0] : VRAM Total Memory (B): 17163091968"
+        total_bytes = sum(
+            int(m) for m in re.findall(r"VRAM Total Memory \(B\):\s*(\d+)", result.stdout)
+        )
+        return "amd", "", total_bytes // (1024 ** 3)
 
     return "none", "", 0
 

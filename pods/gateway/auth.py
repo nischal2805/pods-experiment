@@ -8,9 +8,13 @@ from ..state.defaults import verify_key
 _bearer = HTTPBearer()
 
 
+def get_store() -> StateStore:
+    return StateStore()
+
+
 def validate_api_key(
     credentials: HTTPAuthorizationCredentials = Security(_bearer),
-    store: StateStore = Depends(StateStore),
+    store: StateStore = Depends(get_store),
 ) -> Key:
     token = credentials.credentials
     try:

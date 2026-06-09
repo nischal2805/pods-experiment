@@ -38,6 +38,24 @@
 
 ---
 
+## Bugs Fixed (Session 2026-06-10 — full-codebase review)
+
+| # | Bug | Root Cause | Fix |
+|---|-----|------------|-----|
+| 17 | Gateway exposed `?path=` query param on all authed endpoints | `Depends(StateStore)` made FastAPI treat the store's `path` ctor arg as a query parameter — clients could point key validation at an arbitrary state file | Dependency provider `get_store()` in `gateway/auth.py` ✅ |
+| 18 | Backend connect errors crashed mid-stream after HTTP 200 already sent | `stream_to_backend` returned the StreamingResponse before opening the upstream connection; errors raised inside the generator bypassed the route's try/except | Connect + status check before returning; backend 4xx/5xx now propagate as 503 with body excerpt ✅ |
+| 19 | Long generations / slow prefill cut off at 30s | Blanket `timeout=30` on the proxy stream | `httpx.Timeout(read=300, connect=10)` ✅ |
+| 20 | Second `pods model load` orphaned worker rpc-server | `/internal/start-rpc` spawned a new rpc-server without stopping the old one — new one fails to bind :50052 and dies, `_engine` points at corpse | `_replace_engine()` stops the old engine first; engine swaps serialized with a lock ✅ |
+| 21 | Failed coordinator restart left model marked `loaded=True` with dead pid | `_restart_llamacpp` returned silently on `engine.start()` failure | Marks `loaded=False`, `loaded_pid=0`, clears `worker_nodes` ✅ |
+| 22 | Models-dir containment check bypassable via sibling dir (`models-evil`) | `str.startswith` prefix check | `Path.is_relative_to` ✅ |
+| 23 | `pods.exe` crashed with raw traceback when WSL missing | `subprocess.run(["wsl", ...])` raises `FileNotFoundError` | `check_wsl`/`_get_wsl_ip` catch FileNotFoundError/Timeout ✅ |
+| 24 | Hung tailscale daemon froze `pods init/join/status/ping` forever | No subprocess timeouts in `network/tailscale.py`; `ping` TimeoutExpired uncaught | Timeouts on all calls; missing binary → friendly `NetworkError` ✅ |
+| 25 | AMD GPUs always reported 0 GB VRAM | rocm-smi output never parsed | Parse `VRAM Total Memory (B)` lines, sum across GPUs ✅ |
+| 26 | Log file handle leaks in exo/ollama engines | `open()` without close before `Popen` | `with open(...)` (child keeps inherited fd) ✅ |
+| — | Module-level code placed above imports in `models/manager.py` | Earlier hotfix inserted `_validate_rpc_hosts` before the import block | Reordered ✅ |
+
+Regression tests: `tests/test_codebase_fixes.py` (8 tests).
+
 ## Bugs Fixed (Sessions ≤ 2026-05-10)
 
 | # | Bug | Root Cause | Fix |

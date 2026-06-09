@@ -11,12 +11,21 @@ class TailscaleStatus:
     peers: list[dict] = field(default_factory=list)
 
 
+def _run(args: list[str], timeout: int) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+
 def get_ip() -> str:
-    result = subprocess.run(
-        ["tailscale", "ip", "-4"],
-        capture_output=True,
-        text=True,
-    )
+    result = _run(["tailscale", "ip", "-4"], timeout=10)
+    if result is None:
+        raise NetworkError(
+            "Cannot get Tailscale IP",
+            reason="tailscale CLI not found or not responding",
+            suggestion="Install Tailscale from https://tailscale.com/download and run 'tailscale up'",
+        )
     if result.returncode != 0 or not result.stdout.strip():
         raise NetworkError(
             "Cannot get Tailscale IP",
@@ -27,12 +36,8 @@ def get_ip() -> str:
 
 
 def get_status() -> TailscaleStatus:
-    result = subprocess.run(
-        ["tailscale", "status", "--json"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
+    result = _run(["tailscale", "status", "--json"], timeout=10)
+    if result is None or result.returncode != 0:
         return TailscaleStatus(running=False)
     try:
         data = json.loads(result.stdout)
@@ -43,12 +48,9 @@ def get_status() -> TailscaleStatus:
 
 
 def ping(peer_ip: str) -> dict:
-    result = subprocess.run(
-        ["tailscale", "ping", peer_ip],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
+    result = _run(["tailscale", "ping", peer_ip], timeout=15)
+    if result is None:
+        return {"ip": peer_ip, "direct": False, "output": "tailscale ping failed or timed out"}
     direct = "direct connection" in result.stdout.lower()
     return {
         "ip": peer_ip,
@@ -58,11 +60,13 @@ def ping(peer_ip: str) -> dict:
 
 
 def bring_up(authkey: str) -> None:
-    result = subprocess.run(
-        ["tailscale", "up", f"--authkey={authkey}", "--accept-routes"],
-        capture_output=True,
-        text=True,
-    )
+    result = _run(["tailscale", "up", f"--authkey={authkey}", "--accept-routes"], timeout=60)
+    if result is None:
+        raise NetworkError(
+            "Failed to bring up Tailscale",
+            reason="tailscale CLI not found or timed out",
+            suggestion="Install Tailscale from https://tailscale.com/download",
+        )
     if result.returncode != 0:
         raise NetworkError(
             "Failed to bring up Tailscale",

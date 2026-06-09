@@ -19,8 +19,8 @@ class ExoEngine(InferenceEngine):
 
     def start(self, config: dict) -> None:
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        log = open(LOGS_DIR / "exo.log", "a")
-        self._process = subprocess.Popen(["exo"], stdout=log, stderr=log)
+        with open(LOGS_DIR / "exo.log", "a") as log:
+            self._process = subprocess.Popen(["exo"], stdout=log, stderr=log)
 
     def stop(self) -> None:
         if self._process and self._process.poll() is None:

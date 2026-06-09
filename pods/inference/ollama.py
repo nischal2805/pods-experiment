@@ -20,8 +20,8 @@ class OllamaEngine(InferenceEngine):
 
     def start(self, config: dict) -> None:
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        log = open(LOGS_DIR / "ollama.log", "a")
-        self._process = subprocess.Popen(["ollama", "serve"], stdout=log, stderr=log)
+        with open(LOGS_DIR / "ollama.log", "a") as log:
+            self._process = subprocess.Popen(["ollama", "serve"], stdout=log, stderr=log)
 
     def stop(self) -> None:
         if self._process and self._process.poll() is None:

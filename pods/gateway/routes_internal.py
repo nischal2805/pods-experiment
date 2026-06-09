@@ -162,6 +162,16 @@ def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
             engine.start(config)
         except Exception as exc:
             _log.error("LlamaCpp restart failed for model '%s': %s", model_name, exc)
+
+            def _mark_failed(fresh):
+                for m in fresh.models:
+                    if m.name == model_name:
+                        m.loaded = False
+                        m.loaded_pid = 0
+                        m.worker_nodes = []
+                        break
+
+            store.update(_mark_failed)
             return
 
         loaded_pid = engine._process.pid if engine._process else 0
