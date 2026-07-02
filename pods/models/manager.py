@@ -5,6 +5,15 @@ from pathlib import Path
 
 import httpx
 
+from ..errors import InferenceError
+from ..internal_auth import internal_headers
+from ..inference.llamacpp import LlamaCppEngine
+from ..network.probe import tcp_probe
+from ..state.schema import Model, PodState
+from ..state.store import StateStore
+from .downloader import download
+from .registry import resolve
+
 _RPC_HOST_RE = re.compile(r"^[0-9a-fA-F:.]+:\d{1,5}$")
 
 
@@ -17,15 +26,6 @@ def _validate_rpc_hosts(rpc_hosts: list[str]) -> list[str]:
             suggestion="Pass --rpc 100.0.0.2:50052 (Tailscale IPs only)",
         )
     return rpc_hosts
-
-from ..errors import InferenceError
-from ..internal_auth import internal_headers
-from ..inference.llamacpp import LlamaCppEngine
-from ..network.probe import tcp_probe
-from ..state.schema import Model, PodState
-from ..state.store import StateStore
-from .downloader import download
-from .registry import resolve
 
 RPC_PORT = 50052
 RPC_PROBE_TIMEOUT_S = 3.0
@@ -171,7 +171,7 @@ class ModelManager:
                 suggestion="Place the GGUF file directly in ~/pods/models/",
             )
         model_path = raw_path.resolve()
-        if not str(model_path).startswith(str(MODELS_DIR.resolve())):
+        if not model_path.is_relative_to(MODELS_DIR.resolve()):
             raise InferenceError(
                 f"Invalid filename: {filename}",
                 reason="Filename must not escape the models directory",

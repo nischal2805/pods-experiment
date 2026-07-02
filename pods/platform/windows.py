@@ -10,19 +10,31 @@ class WindowsProxy:
     """Translates pods commands to WSL2 equivalents on Windows."""
 
     def check_wsl(self) -> bool:
-        result = subprocess.run(
-            ["wsl", "--status"],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["wsl", "--status"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
         return result.returncode == 0
 
     def _get_wsl_ip(self) -> str:
-        result = subprocess.run(
-            ["wsl", "--", "hostname", "-I"],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["wsl", "--", "hostname", "-I"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            raise SetupError(
+                "Cannot determine WSL2 IP address",
+                reason=str(e),
+                suggestion="Ensure WSL2 is installed and running",
+            )
         if result.returncode != 0 or not result.stdout.strip():
             raise SetupError(
                 "Cannot determine WSL2 IP address",

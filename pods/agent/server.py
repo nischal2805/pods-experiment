@@ -13,6 +13,7 @@ from ..inference.llamacpp import LlamaCppEngine
 from ..agent.heartbeat import HeartbeatThread, _send_heartbeat_once
 
 _engine: LlamaCppEngine | None = None
+_engine_lock = threading.Lock()
 _heartbeat: HeartbeatThread | None = None
 
 _CONFIG_PATH = Path.home() / ".pods" / "config.json"
@@ -42,45 +43,58 @@ async def _lifespan(_application: FastAPI):
 app = FastAPI(lifespan=_lifespan)
 
 
+def _replace_engine() -> None:
+    """Stop any existing rpc-server, then start a fresh one.
+
+    Without the stop, a second start-rpc leaves the old process bound to
+    port 50052 while the new one fails to bind and dies — and stop-rpc would
+    then only stop the dead one.
+    """
+    global _engine
+    with _engine_lock:
+        if _engine is not None:
+            try:
+                _engine.stop()
+            except Exception:
+                pass
+        engine = LlamaCppEngine()
+        engine.start({"mode": "worker"})
+        _engine = engine
+
+
 @app.post("/internal/start-rpc")
 def start_rpc(_: None = Depends(require_internal_access)) -> dict:
-    global _engine
-    engine = LlamaCppEngine()
-    engine.start({"mode": "worker"})
-    _engine = engine
+    _replace_engine()
     return {"status": "started"}
 
 
 @app.post("/internal/reconfigure")
 def reconfigure(_: None = Depends(require_internal_access)) -> dict:
-    global _engine
-    if _engine:
-        _engine.stop()
-    engine = LlamaCppEngine()
-    engine.start({"mode": "worker"})
-    _engine = engine
+    _replace_engine()
     return {"status": "reconfigured"}
 
 
 @app.post("/internal/stop-rpc")
 def stop_rpc(_: None = Depends(require_internal_access)) -> dict:
     global _engine
-    if _engine:
-        _engine.stop()
-        _engine = None
-        return {"status": "stopped"}
-    return {"status": "not_running"}
+    with _engine_lock:
+        if _engine:
+            _engine.stop()
+            _engine = None
+            return {"status": "stopped"}
+        return {"status": "not_running"}
 
 
 @app.post("/internal/shutdown")
 def shutdown(_: None = Depends(require_internal_access)) -> dict:
     global _engine
-    if _engine:
-        try:
-            _engine.stop()
-        except Exception:
-            pass
-        _engine = None
+    with _engine_lock:
+        if _engine:
+            try:
+                _engine.stop()
+            except Exception:
+                pass
+            _engine = None
 
     def _exit_after_response() -> None:
         time.sleep(0.5)
