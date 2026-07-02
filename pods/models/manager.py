@@ -29,7 +29,7 @@ from .registry import resolve
 
 RPC_PORT = 50052
 RPC_PROBE_TIMEOUT_S = 3.0
-RPC_PROBE_DEADLINE_S = 5.0
+RPC_PROBE_DEADLINE_S = 20.0  # rpc-server CUDA init can take >5s before it binds the port
 RPC_PROBE_INTERVAL_S = 1.0
 
 MODELS_DIR = Path.home() / "pods" / "models"
@@ -80,8 +80,12 @@ def _start_rpc_on_workers(state: PodState) -> list[str]:
             print(f"  [pods] Started rpc-server on {w.name} ({w.tailscale_ip}) — probing :{RPC_PORT}")
             if not _wait_rpc_reachable(w.tailscale_ip):
                 print(
-                    f"  [pods] Worker {w.name} rpc-server unreachable on "
-                    f"{w.tailscale_ip}:{RPC_PORT} after {RPC_PROBE_DEADLINE_S:.0f}s — skipping"
+                    f"  [pods] ✗ Worker {w.name} rpc-server unreachable on "
+                    f"{w.tailscale_ip}:{RPC_PORT} after {RPC_PROBE_DEADLINE_S:.0f}s — skipping\n"
+                    f"         Possible causes:\n"
+                    f"         1. Firewall blocking port {RPC_PORT} on the worker (sudo ufw allow {RPC_PORT}/tcp)\n"
+                    f"         2. rpc-server crashed right after start — check ~/.pods/logs/rpc-server.log on the worker\n"
+                    f"         3. Tailscale relaying instead of direct connection — run 'pods ping'"
                 )
                 continue
             rpc_hosts.append(f"{w.tailscale_ip}:{RPC_PORT}")
@@ -94,17 +98,69 @@ class ModelManager:
     def __init__(self, store: StateStore | None = None):
         self.store = store or StateStore()
 
-    def add(self, name: str) -> Model:
+    def add(self, name: str, file: str | None = None) -> Model:
+        if "/" in name:
+            return self._add_from_hf(name, file)
         try:
             entry = resolve(name)
         except KeyError:
             raise InferenceError(
                 f"Unknown model '{name}'",
                 reason=f"'{name}' is not in the built-in registry",
-                suggestion="Run 'pods model list' to see available models",
+                suggestion="Run 'pods model list' for shortcuts, or pass any HF GGUF repo: "
+                           "pods model add unsloth/Qwen3-8B-GGUF [--file <name>.gguf]",
             )
         path = download(name, entry["repo"], entry["filename"], entry["size_gb"], shards=entry.get("shards"))
         return self.register(name, path.name, size_gb=entry["size_gb"])
+
+    def _add_from_hf(self, repo: str, file: str | None) -> Model:
+        """Add any HuggingFace GGUF repo, e.g. 'unsloth/Qwen3-8B-GGUF'."""
+        from huggingface_hub import list_repo_files
+
+        try:
+            ggufs = [f for f in list_repo_files(repo) if f.lower().endswith(".gguf")]
+        except Exception as e:
+            raise InferenceError(
+                f"Cannot list files in '{repo}'",
+                reason=str(e),
+                suggestion="Check the repo id, your internet connection, or set HF_TOKEN for gated repos",
+            )
+        if not ggufs:
+            raise InferenceError(
+                f"No GGUF files in '{repo}'",
+                reason="Repo contains no .gguf files",
+                suggestion="Pick a GGUF quantization repo (often the model name + '-GGUF')",
+            )
+        if file is None:
+            q4 = sorted(f for f in ggufs if "q4_k_m" in f.lower())
+            if not q4:
+                listing = "\n".join(f"  {f}" for f in sorted(ggufs)[:30])
+                raise InferenceError(
+                    f"No default (Q4_K_M) quant in '{repo}' — pick one with --file",
+                    reason=f"Available GGUF files:\n{listing}",
+                    suggestion=f"pods model add {repo} --file <one of the above>",
+                )
+            file = q4[0]
+        elif file not in ggufs:
+            raise InferenceError(
+                f"File '{file}' not found in '{repo}'",
+                reason=f"Available: {', '.join(sorted(ggufs)[:10])}",
+                suggestion="Pass an exact filename from the repo",
+            )
+
+        # Multi-part GGUFs: pick up all sibling shards of the chosen file
+        shard_match = re.match(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", file, re.IGNORECASE)
+        shards = None
+        if shard_match:
+            prefix = shard_match.group(1)
+            shards = sorted(f for f in ggufs if f.startswith(f"{prefix}-") and "-of-" in f)
+            file = shards[0]
+
+        name = repo.split("/")[-1].lower().removesuffix("-gguf")
+        download(name, repo, file, 0.0, shards=shards)
+        # `file` may include a repo subdir (e.g. "Q4_K_M/model.gguf"); hf_hub_download
+        # mirrors that layout under MODELS_DIR, and register() resolves it safely.
+        return self.register(name, file)
 
     def register(self, name: str, filename: str, size_gb: float = 0.0) -> Model:
         raw_path = MODELS_DIR / filename

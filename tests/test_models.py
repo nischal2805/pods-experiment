@@ -26,7 +26,8 @@ def test_list_names():
     assert "qwen7b" in names
     assert "phi3.5mini" in names
     assert "llama8b" in names
-    assert len(names) == 6
+    assert "llama3-8b" in names
+    assert len(names) == 7
 
 
 def test_add_unknown_model_raises(tmp_path):
@@ -38,6 +39,48 @@ def test_add_unknown_model_raises(tmp_path):
     mgr = ModelManager(store=store)
     with pytest.raises(InferenceError):
         mgr.add("no-such-model")
+
+
+def test_add_hf_repo_picks_q4_and_shards(tmp_path):
+    from pods.models.manager import ModelManager
+
+    files = [
+        "README.md",
+        "model-Q8_0.gguf",
+        "model-q4_k_m-00001-of-00002.gguf",
+        "model-q4_k_m-00002-of-00002.gguf",
+    ]
+    store = StateStore(path=tmp_path / "state.json")
+    store.save(PodState(pod=Pod(name="test", coordinator_ip="100.1.2.3")))
+    mgr = ModelManager(store=store)
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    (models_dir / "model-q4_k_m-00001-of-00002.gguf").touch()
+
+    with patch("huggingface_hub.list_repo_files", return_value=files), \
+         patch("pods.models.manager.download") as dl, \
+         patch("pods.models.manager.MODELS_DIR", models_dir):
+        model = mgr.add("unsloth/Qwen3-8B-GGUF")
+
+    dl.assert_called_once()
+    args = dl.call_args
+    assert args[0][2] == "model-q4_k_m-00001-of-00002.gguf"
+    assert args[1]["shards"] == [
+        "model-q4_k_m-00001-of-00002.gguf",
+        "model-q4_k_m-00002-of-00002.gguf",
+    ]
+    assert model.name == "qwen3-8b"
+
+
+def test_add_hf_repo_no_q4_lists_files(tmp_path):
+    from pods.models.manager import ModelManager
+
+    store = StateStore(path=tmp_path / "state.json")
+    store.save(PodState(pod=Pod(name="test", coordinator_ip="100.1.2.3")))
+    mgr = ModelManager(store=store)
+    with patch("huggingface_hub.list_repo_files", return_value=["model-Q8_0.gguf"]):
+        with pytest.raises(InferenceError, match="--file"):
+            mgr.add("some/repo-GGUF")
 
 
 def test_register_missing_file_raises(tmp_path):

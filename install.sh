@@ -80,7 +80,7 @@ fi
 
 # Install pods (uv pip is much faster than pip)
 info "Installing pods Python package..."
-uv pip install --python "${VENV_PYTHON}" --quiet --reinstall -e "${REPO_DIR}"
+uv pip install --python "${VENV_PYTHON}" --quiet --reinstall --config-setting editable_mode=compat -e "${REPO_DIR}"
 ok "pods package installed"
 
 # Launcher

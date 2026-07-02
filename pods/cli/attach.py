@@ -24,8 +24,14 @@ def cmd():
 
         coordinator_ip = config.get("coordinator_ip")
         node_id = config.get("node_id")
+        role = config.get("role", "worker")
 
-        engine_name, engine = FallbackOrchestrator().start_best_engine({})
+        if role == "coordinator":
+            click.echo("Coordinator node: inference is started via 'pods model load', not attach.")
+            click.echo("Run 'pods model load <name>' to start inference.")
+            return
+
+        engine_name, engine = FallbackOrchestrator().start_best_engine({"mode": "worker"})
         click.echo(f"✓ Active engine: {engine_name}")
 
         models = engine.get_models()

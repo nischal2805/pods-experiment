@@ -42,6 +42,9 @@ REGISTRY = {
     },
 }
 
+# README uses "llama3-8b"
+REGISTRY["llama3-8b"] = REGISTRY["llama8b"]
+
 
 def resolve(name: str) -> dict:
     """Return registry entry for name. Raises KeyError if not found."""

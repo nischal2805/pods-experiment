@@ -99,6 +99,9 @@ def _make_executable(path: Path) -> None:
 
 def download_and_install_binaries(platform_info: PlatformInfo) -> None:
     """Download correct llama.cpp pre-built binaries from GitHub releases."""
+    # Platform guard first — raises PlatformError before any network I/O
+    keywords = _asset_keywords(platform_info)
+
     print("Fetching latest llama.cpp release info...")
     try:
         req = urllib.request.Request(GITHUB_API, headers={"User-Agent": "pods-cli"})
@@ -113,7 +116,6 @@ def download_and_install_binaries(platform_info: PlatformInfo) -> None:
 
     tag = release["tag_name"]
     assets = release.get("assets", [])
-    keywords = _asset_keywords(platform_info)
     url = _find_asset(assets, keywords)
 
     print(f"Downloading llama.cpp {tag} ({', '.join(keywords)})...")

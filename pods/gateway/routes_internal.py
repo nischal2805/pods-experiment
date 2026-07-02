@@ -64,9 +64,21 @@ def register(payload: RegisterPayload, store: StateStore = Depends(get_store)):
     )
 
     def _mutate(state):
+        # Drop stale entries for the same IP (re-join with a fresh node_id
+        # would otherwise leave a ghost member that pollutes rpc_hosts).
+        state.members = [
+            m for m in state.members
+            if m.node_id == payload.node_id or m.tailscale_ip != payload.tailscale_ip
+        ]
         existing_ids = {m.node_id for m in state.members}
         if payload.node_id not in existing_ids:
             state.members.append(member)
+        else:
+            for m in state.members:
+                if m.node_id == payload.node_id:
+                    m.last_seen = now
+                    m.tailscale_ip = payload.tailscale_ip
+                    break
 
     store.update(_mutate)
     return {"status": "registered", "node_id": payload.node_id}

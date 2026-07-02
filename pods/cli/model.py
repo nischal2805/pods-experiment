@@ -13,11 +13,16 @@ def cmd():
 
 @cmd.command("add")
 @click.argument("name")
-def add(name: str):
-    """Download a model by name and register it."""
+@click.option("--file", "file", default=None, help="Exact GGUF filename in the repo (HF repos only; default: first Q4_K_M)")
+def add(name: str, file: str | None):
+    """Download a model and register it.
+
+    NAME is a registry shortcut (see 'pods model list') or any
+    HuggingFace GGUF repo, e.g. 'unsloth/Qwen3-8B-GGUF'.
+    """
     try:
         mgr = ModelManager()
-        model = mgr.add(name)
+        model = mgr.add(name, file=file)
         click.echo(f"✓ Added {model.name} ({model.size_gb:.1f}GB) → {model.file}")
     except PodsError as e:
         click.echo(str(e), err=True)

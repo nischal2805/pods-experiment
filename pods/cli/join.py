@@ -1,6 +1,7 @@
 import sys
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import click
@@ -8,6 +9,7 @@ import httpx
 
 from ..errors import PodsError
 from ..network.invite import decode_invite
+from ..network.probe import tcp_probe
 from ..network.tailscale import bring_up, get_ip
 from ..internal_auth import HEADER_NAME
 from ..platform.detect import detect_platform
@@ -123,6 +125,18 @@ def cmd(link: str, authkey: str | None):
                 [sys.executable, "-m", "uvicorn", "pods.agent.server:app", "--host", "0.0.0.0", "--port", "8082", "--log-level", "warning"],
                 stdout=log, stderr=log,
             )
+
+        # Wait for the agent to bind port 8082 — the coordinator's model load
+        # POSTs to it, and a fire-and-forget Popen loses that race.
+        click.echo("  Waiting for local agent to start...")
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if tcp_probe("127.0.0.1", 8082, timeout=0.5):
+                click.echo("  ✓ Agent ready on port 8082")
+                break
+            time.sleep(0.5)
+        else:
+            click.echo("  ⚠ Agent didn't start within 15s — check ~/.pods/logs/agent.log", err=True)
 
         click.echo(f"\n✓ Joined pod. Node IP: {tailscale_ip}")
         click.echo("  Run 'pods attach' to start inference backend.")
