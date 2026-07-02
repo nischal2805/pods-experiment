@@ -165,10 +165,14 @@ def _restart_llamacpp(model_name: str, old_pid: int, store: StateStore) -> None:
 
         rpc_hosts = _start_rpc_on_workers(state)
         engine = LlamaCppEngine()
+        from ..models.manager import LOCAL_LOAD_HEALTH_TIMEOUT_S, DISTRIBUTED_LOAD_HEALTH_TIMEOUT_S
         config = {
             "mode": "coordinator",
             "model_path": str(MODELS_DIR / model.file),
             "rpc_hosts": rpc_hosts,
+            "health_timeout_s": (
+                DISTRIBUTED_LOAD_HEALTH_TIMEOUT_S if rpc_hosts else LOCAL_LOAD_HEALTH_TIMEOUT_S
+            ),
         }
         try:
             engine.start(config)

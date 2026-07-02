@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 
@@ -50,12 +51,20 @@ def get_status() -> TailscaleStatus:
 def ping(peer_ip: str) -> dict:
     result = _run(["tailscale", "ping", peer_ip], timeout=15)
     if result is None:
-        return {"ip": peer_ip, "direct": False, "output": "tailscale ping failed or timed out"}
-    direct = "direct connection" in result.stdout.lower()
+        return {"ip": peer_ip, "direct": False, "derp_region": None, "output": "tailscale ping failed or timed out"}
+    out = result.stdout
+    direct = "direct connection" in out.lower()
+    derp_region = None
+    if not direct:
+        # parse "via DERP(<region>)" from output
+        m = re.search(r"via DERP\(([^)]+)\)", out)
+        if m:
+            derp_region = m.group(1)
     return {
         "ip": peer_ip,
         "direct": direct,
-        "output": result.stdout.strip(),
+        "derp_region": derp_region,
+        "output": out.strip(),
     }
 
 

@@ -21,13 +21,18 @@ def cmd():
         relayed = []
         for m in members:
             result = ping(m.tailscale_ip)
-            status = "direct" if result["direct"] else "relay"
+            if result["direct"]:
+                status = "direct"
+            else:
+                region = result.get("derp_region") or "unknown"
+                status = f"relay via DERP({region})"
             click.echo(f"  {m.name:20s}  {m.tailscale_ip:15s}  {status}")
             if not result["direct"]:
                 relayed.append(m.tailscale_ip)
 
         if relayed:
             click.echo(f"\n{len(relayed)} peer(s) using relay. Run 'pods ping' a few more times to help Tailscale establish direct paths.")
+            click.echo("If relay path is unavoidable (CGNAT/symmetric NAT), see docs/CUSTOM_DERP.md to deploy a low-latency DERP relay.")
 
     except PodsError as e:
         click.echo(str(e), err=True)

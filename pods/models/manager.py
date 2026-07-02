@@ -30,7 +30,9 @@ def _validate_rpc_hosts(rpc_hosts: list[str]) -> list[str]:
 RPC_PORT = 50052
 RPC_PROBE_TIMEOUT_S = 3.0
 RPC_PROBE_DEADLINE_S = 20.0  # rpc-server CUDA init can take >5s before it binds the port
-RPC_PROBE_INTERVAL_S = 1.0
+RPC_PROBE_INTERVAL_S = 2.0
+LOCAL_LOAD_HEALTH_TIMEOUT_S = 120
+DISTRIBUTED_LOAD_HEALTH_TIMEOUT_S = 420  # tensor upload to workers over relay can take minutes
 
 MODELS_DIR = Path.home() / "pods" / "models"
 
@@ -75,22 +77,38 @@ def _start_rpc_on_workers(state: PodState) -> list[str]:
                 timeout=10,
             )
             if r.status_code != 200:
-                print(f"  [pods] Worker {w.name} returned {r.status_code} — skipping")
-                continue
-            print(f"  [pods] Started rpc-server on {w.name} ({w.tailscale_ip}) — probing :{RPC_PORT}")
-            if not _wait_rpc_reachable(w.tailscale_ip):
                 print(
-                    f"  [pods] ✗ Worker {w.name} rpc-server unreachable on "
-                    f"{w.tailscale_ip}:{RPC_PORT} after {RPC_PROBE_DEADLINE_S:.0f}s — skipping\n"
-                    f"         Possible causes:\n"
-                    f"         1. Firewall blocking port {RPC_PORT} on the worker (sudo ufw allow {RPC_PORT}/tcp)\n"
-                    f"         2. rpc-server crashed right after start — check ~/.pods/logs/rpc-server.log on the worker\n"
-                    f"         3. Tailscale relaying instead of direct connection — run 'pods ping'"
+                    f"  [pods] Worker {w.name} ({w.tailscale_ip}) returned HTTP {r.status_code} "
+                    f"from /internal/start-rpc — skipping. Check worker agent logs."
                 )
                 continue
-            rpc_hosts.append(f"{w.tailscale_ip}:{RPC_PORT}")
+        except httpx.ConnectError:
+            print(
+                f"  [pods] Worker {w.name} ({w.tailscale_ip}:8082) connection refused — "
+                f"agent not running? Run 'pods join' on that machine."
+            )
+            continue
+        except httpx.TimeoutException:
+            print(
+                f"  [pods] Worker {w.name} ({w.tailscale_ip}:8082) timed out — "
+                f"Tailscale path unstable. Run 'pods ping' to check connectivity."
+            )
+            continue
         except Exception as e:
-            print(f"  [pods] Could not reach worker {w.name} ({w.tailscale_ip}): {e}")
+            print(f"  [pods] Worker {w.name} ({w.tailscale_ip}): unexpected error: {e}")
+            continue
+        print(f"  [pods] Started rpc-server on {w.name} ({w.tailscale_ip}) — probing :{RPC_PORT}")
+        if not _wait_rpc_reachable(w.tailscale_ip):
+            print(
+                f"  [pods] ✗ Worker {w.name} rpc-server unreachable on "
+                f"{w.tailscale_ip}:{RPC_PORT} after {RPC_PROBE_DEADLINE_S:.0f}s — skipping\n"
+                f"         Possible causes:\n"
+                f"         1. Firewall blocking port {RPC_PORT} on the worker (sudo ufw allow {RPC_PORT}/tcp)\n"
+                f"         2. rpc-server crashed right after start — check ~/.pods/logs/rpc-server.log on the worker\n"
+                f"         3. Tailscale relaying instead of direct connection — run 'pods ping'"
+            )
+            continue
+        rpc_hosts.append(f"{w.tailscale_ip}:{RPC_PORT}")
     return rpc_hosts
 
 
@@ -214,12 +232,19 @@ class ModelManager:
             rpc_hosts = _validate_rpc_hosts(rpc_hosts)
         if rpc_hosts:
             print(f"[pods] Loading with {len(rpc_hosts)} RPC worker(s): {', '.join(rpc_hosts)}")
+            print(
+                f"[pods] Distributed load detected — waiting up to "
+                f"{DISTRIBUTED_LOAD_HEALTH_TIMEOUT_S}s for llama-server health"
+            )
         else:
             print("[pods] No online workers found — loading on coordinator GPU only")
         config = {
             "mode": "coordinator",
             "model_path": str(MODELS_DIR / model.file),
             "rpc_hosts": rpc_hosts,
+            "health_timeout_s": (
+                DISTRIBUTED_LOAD_HEALTH_TIMEOUT_S if rpc_hosts else LOCAL_LOAD_HEALTH_TIMEOUT_S
+            ),
         }
         engine.start(config)
         loaded_pid = engine._process.pid if engine._process else 0
