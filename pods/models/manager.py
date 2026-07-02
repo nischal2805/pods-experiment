@@ -32,7 +32,7 @@ RPC_PROBE_TIMEOUT_S = 3.0
 RPC_PROBE_DEADLINE_S = 20.0  # rpc-server CUDA init can take >5s before it binds the port
 RPC_PROBE_INTERVAL_S = 2.0
 LOCAL_LOAD_HEALTH_TIMEOUT_S = 120
-DISTRIBUTED_LOAD_HEALTH_TIMEOUT_S = 420  # tensor upload to workers over relay can take minutes
+DISTRIBUTED_LOAD_HEALTH_TIMEOUT_S = 480  # tensor upload to workers over relay can take minutes
 
 MODELS_DIR = Path.home() / "pods" / "models"
 
