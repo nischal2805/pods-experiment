@@ -144,10 +144,10 @@ def download_and_install_binaries(platform_info: PlatformInfo) -> None:
                     extracted.append(basename)
 
             if not extracted:
-                # Some releases use llama-rpc-server instead of rpc-server
+                # Some releases use llama-rpc-server or ggml-rpc-server instead of rpc-server
                 for name in zf.namelist():
                     basename = Path(name).name
-                    if basename in ("llama-rpc-server", "llama-rpc-server.exe"):
+                    if basename in ("llama-rpc-server", "llama-rpc-server.exe", "ggml-rpc-server", "ggml-rpc-server.exe"):
                         dest = LLAMA_BIN_DIR / "rpc-server"
                         dest.write_bytes(zf.read(name))
                         _make_executable(dest)

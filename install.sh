@@ -162,9 +162,19 @@ else
 
     JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
     info "Compiling with ${JOBS} jobs (grab a coffee)..."
-    if ! cmake --build "${LLAMA_SRC_DIR}/build" --config Release -j "${JOBS}" --target llama-server rpc-server; then
-        fail "cmake build failed. See output above."
-        exit 1
+    # Upstream renamed the RPC target: rpc-server -> ggml-rpc-server (2026).
+    # Try the new name first, fall back to the old one for older checkouts.
+    if ! cmake --build "${LLAMA_SRC_DIR}/build" --config Release -j "${JOBS}" --target llama-server ggml-rpc-server; then
+        warn "ggml-rpc-server target not found — retrying with legacy rpc-server target..."
+        if ! cmake --build "${LLAMA_SRC_DIR}/build" --config Release -j "${JOBS}" --target llama-server rpc-server; then
+            fail "cmake build failed. See output above."
+            exit 1
+        fi
+    fi
+
+    # Normalize binary name so pods always finds build/bin/rpc-server
+    if [[ ! -x "${RPC_SERVER}" && -x "${LLAMA_BIN_DIR}/ggml-rpc-server" ]]; then
+        ln -sf "ggml-rpc-server" "${RPC_SERVER}"
     fi
 
     if [[ -x "${LLAMA_SERVER}" && -x "${RPC_SERVER}" ]]; then
